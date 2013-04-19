@@ -14,7 +14,7 @@ parser.add_argument('--host', type=str, dest='host', action='store', default='s3
 parser.add_argument('--port', type=int, dest='port', action='store', default=80, help='Port to connect to')
 parser.add_argument('--bucket', type=str, dest='bucket', action='store', required=True, help='Name of bucket')
 parser.add_argument('--output', type=str, dest='output', action='store', default='/dev/stdout', help='Name of output')
-parser.add_argument('--creds', type=str, dest='creds', action='store', default=expanduser("~/.s3cfg"), help='Name of file to find aws access id and secret key')
+parser.add_argument('--creds', type=str, dest='creds', action='store', default=expanduser("~/.s3"), help='Name of file to find aws access id and secret key')
 
 def main():
     args = parser.parse_args()
