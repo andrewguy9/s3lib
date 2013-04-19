@@ -58,9 +58,9 @@ def fetch_bucket_part(bucket, host, port, access_id, secret, start=None, max_ite
     amz_headers = []
     string_to_sign = get_string_to_sign(method, content_md5, content_type, http_now, amz_headers, canonical_resource)
     signature = sign_string(secret, string_to_sign)
-    print "string to sign:"
-    print string_to_sign
-    print "signature: ", signature
+    # print "string to sign:"
+    # print string_to_sign
+    # print "signature: ", signature
 
     headers = {}
     headers["Host"]          = "%s.%s" % (bucket, host)
@@ -72,9 +72,9 @@ def fetch_bucket_part(bucket, host, port, access_id, secret, start=None, max_ite
     conn = httplib.HTTPConnection(host, port)
     conn.request(method, resource, "", headers)
     resp = conn.getresponse()
-    print resp.status
-    print resp.reason
-    print resp.getheaders()
+    # print resp.status
+    # print resp.reason
+    # print resp.getheaders()
     print resp.read()
 
 ###########
