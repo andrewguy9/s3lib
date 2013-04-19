@@ -7,6 +7,7 @@ import binascii
 import argparse
 import time
 from os.path import expanduser
+from xml.etree.ElementTree import fromstring as parse
 
 parser = argparse.ArgumentParser("Program lists all the objects in an s3 bucket. Works on really big buckets")
 
@@ -75,7 +76,16 @@ def fetch_bucket_part(bucket, host, port, access_id, secret, start=None, max_ite
     # print resp.status
     # print resp.reason
     # print resp.getheaders()
-    print resp.read()
+    # print resp.read()
+    print interpret_bucket_part(resp.read())
+    
+def interpret_bucket_part(xml):
+    is_truncated_path = '{http://s3.amazonaws.com/doc/2006-03-01/}IsTruncated'
+    key_path = '{http://s3.amazonaws.com/doc/2006-03-01/}Contents/{http://s3.amazonaws.com/doc/2006-03-01/}Key'
+    tree = parse(xml)
+    is_truncated = tree.find(is_truncated_path).text
+    keys = map(lambda x: x.text, tree.findall(key_path))
+    return keys, is_truncated
 
 ###########
 # Testing #
