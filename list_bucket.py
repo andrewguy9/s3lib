@@ -63,11 +63,11 @@ def fetch_bucket_part(bucket, host, port, access_id, secret, start=None, max_ite
     # print "signature: ", signature
 
     headers = {}
-    headers["Host"]          = "%s.%s" % (bucket, host)
-    headers["Date"]          = http_now
+    headers["Host"] = "%s.%s" % (bucket, host)
+    headers["Date"] = http_now
     headers["Authorization"] = "AWS %s:%s" % (access_id, signature)
     if content_type:
-        headers["Content-Type"]  = content_type
+        headers["Content-Type"] = content_type
 
     conn = httplib.HTTPConnection(host, port)
     conn.request(method, resource, "", headers)
