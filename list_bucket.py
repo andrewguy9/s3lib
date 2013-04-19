@@ -17,11 +17,14 @@ parser.add_argument('--bucket', type=str, dest='bucket', action='store', require
 parser.add_argument('--output', type=str, dest='output', action='store', default='/dev/stdout', help='Name of output')
 parser.add_argument('--creds', type=str, dest='creds', action='store', default=expanduser("~/.s3"), help='Name of file to find aws access id and secret key')
 parser.add_argument('--mark', type=str, dest='mark', action='store', default=None, help='Starting point for enumeration')
+parser.add_argument('--batch', type=str, dest='batch', action='store', default=None, help='Batch size for s3 queries')
 
 def main():
     args = parser.parse_args()
     (access_id, secret_key) = load_creds(args.creds)
-    fetch_bucket_part(args.bucket, args.host, args.port, access_id, secret_key, args.mark)
+    keys = fetch_bucket_keys(args.bucket, args.host, args.port, access_id, secret_key, args.mark, args.batch)
+    for key in keys:
+        print key
 
 def load_creds(path):
     with open(path, "r") as f:
@@ -39,6 +42,16 @@ def get_string_to_sign(method, content_md5, content_type, http_date, amz_headers
         amz_headers = ""
     string = "%s\n%s\n%s\n%s\n%s%s" % (method, content_md5, content_type, http_date, amz_headers, resource, )
     return string
+
+def fetch_bucket_keys(bucket, host, port, access_id, secret, start, max_items):
+    more = True
+    while more:
+        xml = fetch_bucket_part(bucket, host, port, access_id, secret, start, max_items)
+        keys, truncated = interpret_bucket_part(xml)
+        for key in keys:
+            yield key
+        start = key # Next request should start from last request's last item.
+        more = truncated
 
 def fetch_bucket_part(bucket, host, port, access_id, secret, start=None, max_items=None):
     http_now = time.strftime('%a, %d %b %G %H:%M:%S +0000', time.gmtime())
@@ -74,19 +87,20 @@ def fetch_bucket_part(bucket, host, port, access_id, secret, start=None, max_ite
     conn = httplib.HTTPConnection(host, port)
     conn.request(method, resource, "", headers)
     resp = conn.getresponse()
-    # print resp.status
-    # print resp.reason
-    # print resp.getheaders()
-    # print resp.read()
-    print interpret_bucket_part(resp.read())
+    if resp.status != httplib.OK:
+        raise ValueError("S3 request failed with: %s" % (resp.status))
+    return resp.read()
     
 def interpret_bucket_part(xml):
     is_truncated_path = '{http://s3.amazonaws.com/doc/2006-03-01/}IsTruncated'
     key_path = '{http://s3.amazonaws.com/doc/2006-03-01/}Contents/{http://s3.amazonaws.com/doc/2006-03-01/}Key'
     tree = parse(xml)
-    is_truncated = tree.find(is_truncated_path).text
-    keys = map(lambda x: x.text, tree.findall(key_path))
-    return keys, is_truncated
+    is_truncated = tree.find(is_truncated_path).text == 'true'
+    keys = tree.findall(key_path)
+    names = []
+    for key in keys:
+        names.append(key.text)
+    return (names, is_truncated)
 
 ###########
 # Testing #
