@@ -16,11 +16,12 @@ parser.add_argument('--port', type=int, dest='port', action='store', default=80,
 parser.add_argument('--bucket', type=str, dest='bucket', action='store', required=True, help='Name of bucket')
 parser.add_argument('--output', type=str, dest='output', action='store', default='/dev/stdout', help='Name of output')
 parser.add_argument('--creds', type=str, dest='creds', action='store', default=expanduser("~/.s3"), help='Name of file to find aws access id and secret key')
+parser.add_argument('--mark', type=str, dest='mark', action='store', default=None, help='Starting point for enumeration')
 
 def main():
     args = parser.parse_args()
     (access_id, secret_key) = load_creds(args.creds)
-    fetch_bucket_part(args.bucket, args.host, args.port, access_id, secret_key)
+    fetch_bucket_part(args.bucket, args.host, args.port, access_id, secret_key, args.mark)
 
 def load_creds(path):
     with open(path, "r") as f:
@@ -47,9 +48,9 @@ def fetch_bucket_part(bucket, host, port, access_id, secret, start=None, max_ite
         args.append( "marker=%s" % (start) )
     if max_items:
         args.append( "max-keys=%s" % (max_items) )
-    args_str = ""
-    if args:
-        args = "?" + "&".join(args)
+    args_str = "&".join(args)
+    if args_str:
+        args_str = "?" + args_str
     canonical_resource = "/%s/" % (bucket)
     resource = "/" + args_str
     
