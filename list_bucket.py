@@ -1,13 +1,8 @@
 #!/usr/bin/env python
 
-import httplib 
-from hashlib import sha1
-import hmac
-import binascii
 import argparse
-import time
 from os.path import expanduser
-from xml.etree.ElementTree import fromstring as parse
+from s3_lib import list_bucket
 
 parser = argparse.ArgumentParser("Program lists all the objects in an s3 bucket. Works on really big buckets")
 
@@ -22,7 +17,7 @@ parser.add_argument('--batch', type=str, dest='batch', action='store', default=N
 def main():
     args = parser.parse_args()
     (access_id, secret_key) = load_creds(args.creds)
-    keys = fetch_bucket_keys(args.bucket, args.host, args.port, access_id, secret_key, args.mark, args.batch)
+    keys = list_bucket(args.bucket, args.host, args.port, access_id, secret_key, args.mark, args.batch)
     for key in keys:
         print key
 
@@ -32,116 +27,5 @@ def load_creds(path):
         secret_key = f.readline().strip()
         return (access_id, secret_key)
 
-def sign_string(key, string_to_sign):
-        hashed = hmac.new(key, string_to_sign, sha1)
-        return binascii.b2a_base64(hashed.digest()).strip()
-
-def get_string_to_sign(method, content_md5, content_type, http_date, amz_headers, resource):
-    assert(amz_headers == [])
-    if amz_headers == []:
-        amz_headers = ""
-    string = "%s\n%s\n%s\n%s\n%s%s" % (method, content_md5, content_type, http_date, amz_headers, resource, )
-    return string
-
-def fetch_bucket_keys(bucket, host, port, access_id, secret, start, max_items):
-    more = True
-    while more:
-        xml = fetch_bucket_part(bucket, host, port, access_id, secret, start, max_items)
-        keys, truncated = interpret_bucket_part(xml)
-        for key in keys:
-            yield key
-        start = key # Next request should start from last request's last item.
-        more = truncated
-
-def fetch_bucket_part(bucket, host, port, access_id, secret, start=None, max_items=None):
-    http_now = time.strftime('%a, %d %b %G %H:%M:%S +0000', time.gmtime())
-
-    args = []
-    if start:
-        args.append( "marker=%s" % (start) )
-    if max_items:
-        args.append( "max-keys=%s" % (max_items) )
-    args_str = "&".join(args)
-    if args_str:
-        args_str = "?" + args_str
-    canonical_resource = "/%s/" % (bucket)
-    resource = "/" + args_str
-    
-    method = "GET"
-    content_type = ""
-    content_md5 = ""
-    amz_headers = []
-    string_to_sign = get_string_to_sign(method, content_md5, content_type, http_now, amz_headers, canonical_resource)
-    signature = sign_string(secret, string_to_sign)
-    # print "string to sign:"
-    # print string_to_sign
-    # print "signature: ", signature
-
-    headers = {}
-    headers["Host"] = "%s.%s" % (bucket, host)
-    headers["Date"] = http_now
-    headers["Authorization"] = "AWS %s:%s" % (access_id, signature)
-    if content_type:
-        headers["Content-Type"] = content_type
-
-    conn = httplib.HTTPConnection(host, port)
-    conn.request(method, resource, "", headers)
-    resp = conn.getresponse()
-    if resp.status != httplib.OK:
-        raise ValueError("S3 request failed with: %s" % (resp.status))
-    return resp.read()
-    
-def interpret_bucket_part(xml):
-    is_truncated_path = '{http://s3.amazonaws.com/doc/2006-03-01/}IsTruncated'
-    key_path = '{http://s3.amazonaws.com/doc/2006-03-01/}Contents/{http://s3.amazonaws.com/doc/2006-03-01/}Key'
-    tree = parse(xml)
-    is_truncated = tree.find(is_truncated_path).text == 'true'
-    keys = tree.findall(key_path)
-    names = []
-    for key in keys:
-        names.append(key.text)
-    return (names, is_truncated)
-
-###########
-# Testing #
-###########
-
-def validate_signature(string, expected_string, expected_signature):
-    print "testing..."
-    print "***\n" + string + "\n***\n"
-    print "---\n" + expected_string + "\n---\n"
-    assert(string == expected_string)
-    secret = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
-    signature = sign_string(secret, string)
-    print "Checking sigs"
-    print signature
-    print expected_signature
-    assert(signature == expected_signature)
-    print "done"
-
-def test_sign_1():
-    string = get_string_to_sign("GET","", "", "Tue, 27 Mar 2007 19:36:42 +0000", [], "/johnsmith/photos/puppy.jpg")
-    expected_string = "GET\n\n\nTue, 27 Mar 2007 19:36:42 +0000\n/johnsmith/photos/puppy.jpg"
-    expected_signature = "bWq2s1WEIj+Ydj0vQ697zp+IXMU="
-    validate_signature(string, expected_string, expected_signature)
-
-def test_sign_2():
-    string = get_string_to_sign("PUT", "", "image/jpeg", "Tue, 27 Mar 2007 21:15:45 +0000", [], "/johnsmith/photos/puppy.jpg" )
-    expected_string = "PUT\n\nimage/jpeg\nTue, 27 Mar 2007 21:15:45 +0000\n/johnsmith/photos/puppy.jpg"
-    expected_signature = "MyyxeRY7whkBe+bq8fHCL/2kKUg="
-    validate_signature(string, expected_string, expected_signature)
-
-def test_sign_3():
-    string = get_string_to_sign("GET","", "", "Tue, 27 Mar 2007 19:42:41 +0000", [], "/johnsmith/")
-    expected_string = "GET\n\n\nTue, 27 Mar 2007 19:42:41 +0000\n/johnsmith/"
-    expected_signature = "htDYFYduRNen8P9ZfE/s9SuKy0U="
-    validate_signature(string, expected_string, expected_signature)
-
-if __name__ == '__main__':
-    # test_sign_1()
-    # test_sign_2()
-    # test_sign_3()
+if __name__ == "__main__":
     main()
-
-
-
