@@ -26,6 +26,10 @@ def head_object(bucket, key, host, port, access_id, secret):
     (status, headers) = s3_head_request(bucket, key, host, port, access_id, secret)
     return headers
 
+def copy_object(src_bucket, src_key, dst_bucket, dst_key, host, port, headers, access_id, secret):
+    (status, headers, xml) = s3_copy_request(src_bucket, src_key, dst_bucket, dst_key, host, port, headers, access_id, secret) 
+    return (status, headers, xml)
+
 ####################################
 # Http Response Handling Functions #
 ####################################
@@ -51,20 +55,27 @@ def s3_list_request(bucket, host, port, access_id, secret, marker=None, max_keys
         args['marker'] = marker
     if max_keys:
         args['max-keys'] = max_keys
-    (status, headers, xml) = s3_request("GET", bucket, "", host, port, access_id, secret, args)
+    (status, headers, xml) = s3_request("GET", bucket, "", host, port, access_id, secret, args, {})
     if status != httplib.OK:
         raise ValueError("S3 request failed with: %s" % (status))
     else:
         return xml
 
 def s3_head_request(bucket, key, host, port, access_id, secret):
-    (status, headers, response) = s3_request("HEAD", bucket, key, host, port, access_id, secret, {})
+    (status, headers, response) = s3_request("HEAD", bucket, key, host, port, access_id, secret, {}, {})
     if status != httplib.OK:
         raise ValueError("S3 request failed with %s" % (status))
     else:
         return (status, headers)
 
-def s3_request(method, bucket, key, host, port, access_id, secret, args):
+def s3_copy_request(src_bucket, src_key, dst_bucket, dst_key, host, port, headers, access_id, secret):
+    copy_headers = {'x-amz-copy-source':"/%s/%s" % (src_bucket, src_key)}
+    copy_headers['x-amz-metadata-directive'] = 'REPLACE'
+    headers = dict(headers.items() + copy_headers.items())
+    (status, resp_headers, response) = s3_request("PUT", dst_bucket, dst_key, host, port, access_id, secret, {}, headers)
+    return (status, resp_headers, response)
+
+def s3_request(method, bucket, key, host, port, access_id, secret, args, headers):
     http_now = time.strftime('%a, %d %b %G %H:%M:%S +0000', time.gmtime())
 
     args = map( lambda x: "=".join(x), args.items())
@@ -76,16 +87,18 @@ def s3_request(method, bucket, key, host, port, access_id, secret, args):
     
     content_type = ""
     content_md5 = ""
-    amz_headers = []
+    amz_headers = {k:v for k,v in headers.items() if k.lower().startswith('x-amz-')}
     string_to_sign = get_string_to_sign(method, content_md5, content_type, http_now, amz_headers, canonical_resource)
+    print "****:\n", string_to_sign, "\n****"
     signature = sign_string(secret, string_to_sign)
 
-    headers = {}
     headers["Host"] = "%s.%s" % (bucket, host)
     headers["Date"] = http_now
     headers["Authorization"] = "AWS %s:%s" % (access_id, signature)
     if content_type:
         headers["Content-Type"] = content_type
+
+    print "http lib params:",(method, resource, headers)
 
     conn = httplib.HTTPConnection(host, port)
     conn.request(method, resource, "", headers)
@@ -101,10 +114,10 @@ def sign_string(key, string_to_sign):
     return binascii.b2a_base64(hashed.digest()).strip()
 
 def get_string_to_sign(method, content_md5, content_type, http_date, amz_headers, resource):
-    assert(amz_headers == [])
-    if amz_headers == []:
-        amz_headers = "" #TODO I dont handle this yet.
-    string = "%s\n%s\n%s\n%s\n%s%s" % (method, content_md5, content_type, http_date, amz_headers, resource, )
+    key_header_strs = [ (name.lower(), "%s:%s" % (name.lower(), amz_headers[name])) for name in amz_headers.keys() ]
+    header_list = map(lambda x: x[1], sorted(key_header_strs))
+    header_str = "\n".join(header_list)+"\n" 
+    string = "%s\n%s\n%s\n%s\n%s%s" % (method, content_md5, content_type, http_date, header_str, resource, )
     return string
 
 ###########
@@ -125,20 +138,26 @@ def validate_signature(string, expected_string, expected_signature):
     print "done"
 
 def test_sign_get():
-    string = get_string_to_sign("GET","", "", "Tue, 27 Mar 2007 19:36:42 +0000", [], "/johnsmith/photos/puppy.jpg")
+    string = get_string_to_sign("GET","", "", "Tue, 27 Mar 2007 19:36:42 +0000", {}, "/johnsmith/photos/puppy.jpg")
     expected_string = "GET\n\n\nTue, 27 Mar 2007 19:36:42 +0000\n/johnsmith/photos/puppy.jpg"
     expected_signature = "bWq2s1WEIj+Ydj0vQ697zp+IXMU="
     validate_signature(string, expected_string, expected_signature)
 
 def test_sign_put():
-    string = get_string_to_sign("PUT", "", "image/jpeg", "Tue, 27 Mar 2007 21:15:45 +0000", [], "/johnsmith/photos/puppy.jpg" )
+    string = get_string_to_sign("PUT", "", "image/jpeg", "Tue, 27 Mar 2007 21:15:45 +0000", {}, "/johnsmith/photos/puppy.jpg" )
     expected_string = "PUT\n\nimage/jpeg\nTue, 27 Mar 2007 21:15:45 +0000\n/johnsmith/photos/puppy.jpg"
     expected_signature = "MyyxeRY7whkBe+bq8fHCL/2kKUg="
     validate_signature(string, expected_string, expected_signature)
 
 def test_list():
-    string = get_string_to_sign("GET","", "", "Tue, 27 Mar 2007 19:42:41 +0000", [], "/johnsmith/")
+    string = get_string_to_sign("GET","", "", "Tue, 27 Mar 2007 19:42:41 +0000", {}, "/johnsmith/")
     expected_string = "GET\n\n\nTue, 27 Mar 2007 19:42:41 +0000\n/johnsmith/"
     expected_signature = "htDYFYduRNen8P9ZfE/s9SuKy0U="
+    validate_signature(string, expected_string, expected_signature)
+
+def test_copy():
+    string = get_string_to_sign("PUT", "", "", "Wed, 20 Feb 2008 22:12:21 +0000", {"x-amz-copy-source":"/pacific/flotsam"}, "/atlantic/jetsam")
+    expected_string = "PUT\n\n\nWed, 20 Feb 2008 22:12:21 +0000\nx-amz-copy-source:/pacific/flotsam\n/atlantic/jetsam"
+    expected_signature = "ENoSbxYByFA0UGLZUqJN5EUnLDg="
     validate_signature(string, expected_string, expected_signature)
 
