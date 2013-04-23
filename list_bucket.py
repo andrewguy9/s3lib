@@ -8,11 +8,11 @@ parser = argparse.ArgumentParser("Program lists all the objects in an s3 bucket.
 
 parser.add_argument('--host', type=str, dest='host', action='store', default='s3.amazonaws.com', help='Name of host')
 parser.add_argument('--port', type=int, dest='port', action='store', default=80, help='Port to connect to')
-parser.add_argument('--bucket', type=str, dest='bucket', action='store', required=True, help='Name of bucket')
 parser.add_argument('--output', type=str, dest='output', action='store', default='/dev/stdout', help='Name of output')
 parser.add_argument('--creds', type=str, dest='creds', action='store', default=expanduser("~/.s3"), help='Name of file to find aws access id and secret key')
 parser.add_argument('--mark', type=str, dest='mark', action='store', default=None, help='Starting point for enumeration')
 parser.add_argument('--batch', type=str, dest='batch', action='store', default=None, help='Batch size for s3 queries')
+parser.add_argument('bucket', type=str, action='store', help='Name of bucket')
 
 def main():
     args = parser.parse_args()
