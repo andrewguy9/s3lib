@@ -30,6 +30,11 @@ def copy_object(src_bucket, src_key, dst_bucket, dst_key, host, port, headers, a
     (status, headers, xml) = s3_copy_request(src_bucket, src_key, dst_bucket, dst_key, host, port, headers, access_id, secret) 
     return (status, headers, xml)
 
+def put_object(bucket, key, data, host, port, headers, access_id, secret):
+    (status, headers, xml) = s3_put_request(bucket, key, data, host, port, headers, access_id, secret)
+    return (status, headers, xml)
+
+
 ####################################
 # Http Response Handling Functions #
 ####################################
@@ -55,14 +60,14 @@ def s3_list_request(bucket, host, port, access_id, secret, marker=None, max_keys
         args['marker'] = marker
     if max_keys:
         args['max-keys'] = max_keys
-    (status, headers, xml) = s3_request("GET", bucket, "", host, port, access_id, secret, args, {})
+    (status, headers, xml) = s3_request("GET", bucket, "", host, port, access_id, secret, args, {}, '')
     if status != httplib.OK:
         raise ValueError("S3 request failed with: %s" % (status))
     else:
         return xml
 
 def s3_head_request(bucket, key, host, port, access_id, secret):
-    (status, headers, response) = s3_request("HEAD", bucket, key, host, port, access_id, secret, {}, {})
+    (status, headers, response) = s3_request("HEAD", bucket, key, host, port, access_id, secret, {}, {}, '')
     if status != httplib.OK:
         raise ValueError("S3 request failed with %s" % (status))
     else:
@@ -72,10 +77,16 @@ def s3_copy_request(src_bucket, src_key, dst_bucket, dst_key, host, port, header
     copy_headers = {'x-amz-copy-source':"/%s/%s" % (src_bucket, src_key)}
     copy_headers['x-amz-metadata-directive'] = 'REPLACE'
     headers = dict(headers.items() + copy_headers.items())
-    (status, resp_headers, response) = s3_request("PUT", dst_bucket, dst_key, host, port, access_id, secret, {}, headers)
+    (status, resp_headers, response) = s3_request("PUT", dst_bucket, dst_key, host, port, access_id, secret, {}, headers, '')
     return (status, resp_headers, response)
 
-def s3_request(method, bucket, key, host, port, access_id, secret, args, headers):
+def s3_put_request(bucket, key, data, host, port, headers, access_id, secret):
+    args = {}
+    (status, headers, response) = s3_request("PUT", bucket, key, host, port, access_id, secret, args, headers, data)
+    return (status, headers, response)
+
+
+def s3_request(method, bucket, key, host, port, access_id, secret, args, headers, content):
     http_now = time.strftime('%a, %d %b %G %H:%M:%S +0000', time.gmtime())
 
     args = map( lambda x: "=".join(x), args.items())
@@ -87,9 +98,8 @@ def s3_request(method, bucket, key, host, port, access_id, secret, args, headers
     
     content_type = ""
     content_md5 = ""
-    amz_headers = {k:v for k,v in headers.items() if k.lower().startswith('x-amz-')}
+    (amz_headers, reg_headers) = split_headers(headers)
     string_to_sign = get_string_to_sign(method, content_md5, content_type, http_now, amz_headers, canonical_resource)
-    print "****:\n", string_to_sign, "\n****"
     signature = sign_string(secret, string_to_sign)
 
     headers["Host"] = "%s.%s" % (bucket, host)
@@ -98,16 +108,33 @@ def s3_request(method, bucket, key, host, port, access_id, secret, args, headers
     if content_type:
         headers["Content-Type"] = content_type
 
-    print "http lib params:",(method, resource, headers)
+    print "\nHEADERS\n", headers
+    for header, value in headers.items():
+        print header,":",value
+    print "HEADERS END\n\n\n"
 
     conn = httplib.HTTPConnection(host, port)
-    conn.request(method, resource, "", headers)
+    conn.request(method, resource, content, headers)
     resp = conn.getresponse()
     return (resp.status, resp.getheaders(), resp.read())
 
 ##########################
 # Signing Util Functions #
 ##########################
+
+amz_headers_whitelist = ["Cache-Control", "Content-Disposition", "Content-Type", "Content-Language", "Expires", "Content-Encoding"]
+def split_headers(headers):
+    """Some headers are special to amazon. Splits those from regular http headers"""
+    amz_headers = {}
+    reg_headers = {}
+    for cur in headers:
+        if cur in amz_headers_whitelist:
+            amz_headers[cur] = headers[cur]
+        elif cur.lower().startswith('x-amz-'):
+            amz_headers[cur] = headers[cur]
+        else:
+            reg_headers[cur] = headers[cur]
+    return (amz_headers, reg_headers)
 
 def sign_string(key, string_to_sign):
     hashed = hmac.new(key, string_to_sign, sha1)
@@ -116,8 +143,11 @@ def sign_string(key, string_to_sign):
 def get_string_to_sign(method, content_md5, content_type, http_date, amz_headers, resource):
     key_header_strs = [ (name.lower(), "%s:%s" % (name.lower(), amz_headers[name])) for name in amz_headers.keys() ]
     header_list = map(lambda x: x[1], sorted(key_header_strs))
-    header_str = "\n".join(header_list)+"\n" 
+    header_str = "\n".join(header_list)
+    if header_str:
+        header_str+="\n"
     string = "%s\n%s\n%s\n%s\n%s%s" % (method, content_md5, content_type, http_date, header_str, resource, )
+    print "string to sign\n", string, "\nstring to sign end\n\n\n"
     return string
 
 ###########
