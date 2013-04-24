@@ -60,14 +60,14 @@ def s3_list_request(bucket, host, port, access_id, secret, marker=None, max_keys
         args['marker'] = marker
     if max_keys:
         args['max-keys'] = max_keys
-    (status, headers, xml) = s3_request("GET", bucket, "", host, port, access_id, secret, args, {}, '')
+    (status, headers, xml) = s3_request("GET", bucket, "", host, port, 5, access_id, secret, args, {}, '')
     if status != httplib.OK:
         raise ValueError("S3 request failed with: %s" % (status))
     else:
         return xml
 
 def s3_head_request(bucket, key, host, port, access_id, secret):
-    (status, headers, response) = s3_request("HEAD", bucket, key, host, port, access_id, secret, {}, {}, '')
+    (status, headers, response) = s3_request("HEAD", bucket, key, host, port, 2, access_id, secret, {}, {}, '')
     if status != httplib.OK:
         raise ValueError("S3 request failed with %s" % (status))
     else:
@@ -77,7 +77,7 @@ def s3_copy_request(src_bucket, src_key, dst_bucket, dst_key, host, port, header
     copy_headers = {'x-amz-copy-source':"/%s/%s" % (src_bucket, src_key)}
     copy_headers['x-amz-metadata-directive'] = 'REPLACE'
     headers = dict(headers.items() + copy_headers.items())
-    (status, resp_headers, response) = s3_request("PUT", dst_bucket, dst_key, host, port, access_id, secret, {}, headers, '')
+    (status, resp_headers, response) = s3_request("PUT", dst_bucket, dst_key, host, port, 5, access_id, secret, {}, headers, '')
     if status != httplib.OK:
         raise ValueError("S3 request failed with: %s" % (status))
     else:
@@ -85,12 +85,12 @@ def s3_copy_request(src_bucket, src_key, dst_bucket, dst_key, host, port, header
 
 def s3_put_request(bucket, key, data, host, port, headers, access_id, secret):
     args = {}
-    (status, headers, response) = s3_request("PUT", bucket, key, host, port, access_id, secret, args, headers, data)
+    (status, headers, response) = s3_request("PUT", bucket, key, host, port, 5, access_id, secret, args, headers, data)
     #TODO YOU SHOULD HANDLE ERRORS
     return (status, headers, response)
 
 
-def s3_request(method, bucket, key, host, port, access_id, secret, args, headers, content):
+def s3_request(method, bucket, key, host, port, timeout, access_id, secret, args, headers, content):
     http_now = time.strftime('%a, %d %b %G %H:%M:%S +0000', time.gmtime())
 
     args = map( lambda x: "=".join(x), args.items())
@@ -112,7 +112,7 @@ def s3_request(method, bucket, key, host, port, access_id, secret, args, headers
     if content_type:
         headers["Content-Type"] = content_type
 
-    conn = httplib.HTTPConnection(host, port)
+    conn = httplib.HTTPConnection(host, port, timeout=timeout)
     conn.request(method, resource, content, headers)
     resp = conn.getresponse()
     data = resp.read()
