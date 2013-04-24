@@ -100,8 +100,11 @@ def s3_request(method, bucket, key, host, port, timeout, access_id, secret, args
     canonical_resource = "/%s/%s" % (bucket, key)
     resource = "/" + key + args_str
     
-    content_type = ""
-    content_md5 = ""
+    try:
+        content_type = headers['Content-Type']
+    except KeyError:
+        content_type = ''
+    content_md5 = "" #TODO fix this when you really support upload.
     (amz_headers, reg_headers) = split_headers(headers)
     string_to_sign = get_string_to_sign(method, content_md5, content_type, http_now, amz_headers, canonical_resource)
     signature = sign_string(secret, string_to_sign)
@@ -109,8 +112,6 @@ def s3_request(method, bucket, key, host, port, timeout, access_id, secret, args
     headers["Host"] = "%s.%s" % (bucket, host)
     headers["Date"] = http_now
     headers["Authorization"] = "AWS %s:%s" % (access_id, signature)
-    if content_type:
-        headers["Content-Type"] = content_type
 
     conn = httplib.HTTPConnection(host, port, timeout=timeout)
     conn.request(method, resource, content, headers)
