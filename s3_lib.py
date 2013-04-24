@@ -122,15 +122,12 @@ def s3_request(method, bucket, key, host, port, access_id, secret, args, headers
 # Signing Util Functions #
 ##########################
 
-amz_headers_whitelist = ["Cache-Control", "Content-Disposition", "Content-Type", "Content-Language", "Expires", "Content-Encoding"]
 def split_headers(headers):
     """Some headers are special to amazon. Splits those from regular http headers"""
     amz_headers = {}
     reg_headers = {}
     for cur in headers:
-        if cur in amz_headers_whitelist:
-            amz_headers[cur] = headers[cur]
-        elif cur.lower().startswith('x-amz-'):
+        if cur.lower().startswith('x-amz-'):
             amz_headers[cur] = headers[cur]
         else:
             reg_headers[cur] = headers[cur]
