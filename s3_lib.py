@@ -155,14 +155,18 @@ def get_string_to_sign(method, content_md5, content_type, http_date, amz_headers
 ###########
 
 def test_all():
-    print "GET TEST"
-    test_sign_get()
-    print "PUT TEST"
-    test_sign_put()
-    print "LIST TEST"
-    test_sign_list()
-    print "COPY TEST"
-    test_sign_copy()
+    try:
+        print "GET TEST"
+        test_sign_get()
+        print "PUT TEST"
+        test_sign_put()
+        print "LIST TEST"
+        test_sign_list()
+        print "COPY TEST"
+        test_sign_copy()
+    except Exception as e:
+        print "Caught exception!"
+        exit(1)
 
 def validate_signature(string, expected_string, expected_signature):
     print "output:"
