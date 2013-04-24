@@ -78,11 +78,15 @@ def s3_copy_request(src_bucket, src_key, dst_bucket, dst_key, host, port, header
     copy_headers['x-amz-metadata-directive'] = 'REPLACE'
     headers = dict(headers.items() + copy_headers.items())
     (status, resp_headers, response) = s3_request("PUT", dst_bucket, dst_key, host, port, access_id, secret, {}, headers, '')
-    return (status, resp_headers, response)
+    if status != httplib.OK:
+        raise ValueError("S3 request failed with: %s" % (status))
+    else:
+        return (status, resp_headers, response)
 
 def s3_put_request(bucket, key, data, host, port, headers, access_id, secret):
     args = {}
     (status, headers, response) = s3_request("PUT", bucket, key, host, port, access_id, secret, args, headers, data)
+    #TODO YOU SHOULD HANDLE ERRORS
     return (status, headers, response)
 
 
