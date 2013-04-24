@@ -111,6 +111,7 @@ def s3_request(method, bucket, key, host, port, access_id, secret, args, headers
     conn = httplib.HTTPConnection(host, port)
     conn.request(method, resource, content, headers)
     resp = conn.getresponse()
+    conn.close()
     return (resp.status, resp.getheaders(), resp.read())
 
 ##########################
