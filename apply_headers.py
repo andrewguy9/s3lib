@@ -29,7 +29,7 @@ def main():
                 obj = obj.strip()
                 try:
                     (status, resp_headers, xml) = copy_object(args.bucket, obj, args.bucket, obj, args.host, args.port, headers, access_id, secret_key)
-                except ValueError as e:
+                except Exception as e:
                     print 'ERROR', obj, e
                 else:
                     print 'OK   ', obj
