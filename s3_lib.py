@@ -108,11 +108,6 @@ def s3_request(method, bucket, key, host, port, access_id, secret, args, headers
     if content_type:
         headers["Content-Type"] = content_type
 
-    print "\nHEADERS\n", headers
-    for header, value in headers.items():
-        print header,":",value
-    print "HEADERS END\n\n\n"
-
     conn = httplib.HTTPConnection(host, port)
     conn.request(method, resource, content, headers)
     resp = conn.getresponse()
@@ -147,7 +142,6 @@ def get_string_to_sign(method, content_md5, content_type, http_date, amz_headers
     if header_str:
         header_str+="\n"
     string = "%s\n%s\n%s\n%s\n%s%s" % (method, content_md5, content_type, http_date, header_str, resource, )
-    print "string to sign\n", string, "\nstring to sign end\n\n\n"
     return string
 
 ###########
