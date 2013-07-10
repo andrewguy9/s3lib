@@ -2,7 +2,7 @@
 
 import argparse
 from os.path import expanduser
-from s3_lib import list_bucket
+from s3lib import list_bucket
 
 parser = argparse.ArgumentParser("Program lists all the objects in an s3 bucket. Works on really big buckets")
 

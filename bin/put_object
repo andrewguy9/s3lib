@@ -2,7 +2,7 @@
 
 import argparse
 from os.path import expanduser
-from s3_lib import put_object
+from s3lib import put_object
 
 parser = argparse.ArgumentParser("Program puts an object into s3")
 

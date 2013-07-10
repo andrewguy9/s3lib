@@ -2,7 +2,7 @@
 
 import argparse
 from os.path import expanduser
-from s3_lib import copy_object
+from s3lib import copy_object
 
 parser = argparse.ArgumentParser("Program copies an object from one location to another")
 
