@@ -11,11 +11,11 @@ from xml.etree.ElementTree import fromstring as parse
 # Python interface functinos #
 ##############################
 
-def list_bucket(bucket, host, port, access_id, secret, start, max_items):
+def list_bucket(bucket, host, port, access_id, secret, start, prefix, max_items):
     #TODO handle max_items
     more = True
     while more:
-        xml = _s3_list_request(bucket, host, port, access_id, secret, start, max_items)
+        xml = _s3_list_request(bucket, host, port, access_id, secret, start, prefix, max_items)
         keys, truncated = _parse_list_response(xml)
         for key in keys:
             yield key
@@ -54,10 +54,12 @@ def _parse_list_response(xml):
 # Http request Functions #
 ##########################
 
-def _s3_list_request(bucket, host, port, access_id, secret, marker=None, max_keys=None):
+def _s3_list_request(bucket, host, port, access_id, secret, marker=None, prefix=None, max_keys=None):
     args = {}
     if marker:
         args['marker'] = marker
+    if prefix:
+        args['prefix'] = prefix
     if max_keys:
         args['max-keys'] = max_keys
     (status, headers, xml) = _s3_request("GET", bucket, "", host, port, 5, access_id, secret, args, {}, '')
@@ -99,7 +101,7 @@ def _s3_request(method, bucket, key, host, port, timeout, access_id, secret, arg
         args_str = "?" + args_str
     canonical_resource = "/%s/%s" % (bucket, key)
     resource = "/" + key + args_str
-    
+
     try:
         content_type = headers['Content-Type']
     except KeyError:

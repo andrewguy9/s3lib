@@ -11,13 +11,14 @@ parser.add_argument('--port', type=int, dest='port', action='store', default=80,
 parser.add_argument('--output', type=str, dest='output', action='store', default='/dev/stdout', help='Name of output')
 parser.add_argument('--creds', type=str, dest='creds', action='store', default=expanduser("~/.s3"), help='Name of file to find aws access id and secret key')
 parser.add_argument('--mark', type=str, dest='mark', action='store', default=None, help='Starting point for enumeration')
+parser.add_argument('--prefix', type=str, dest='prefix', action='store', default=None, help='Prefix to match on')
 parser.add_argument('--batch', type=str, dest='batch', action='store', default=None, help='Batch size for s3 queries')
 parser.add_argument('bucket', type=str, action='store', help='Name of bucket')
 
 def main():
     args = parser.parse_args()
     (access_id, secret_key) = load_creds(args.creds)
-    keys = list_bucket(args.bucket, args.host, args.port, access_id, secret_key, args.mark, args.batch)
+    keys = list_bucket(args.bucket, args.host, args.port, access_id, secret_key, args.mark, args.prefix, args.batch)
     for key in keys:
         print key
 
