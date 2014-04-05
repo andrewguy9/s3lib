@@ -19,8 +19,9 @@ def main():
     args = parser.parse_args()
     (access_id, secret_key) = load_creds(args.creds)
     keys = list_bucket(args.bucket, args.host, args.port, access_id, secret_key, args.mark, args.prefix, args.batch)
-    for key in keys:
-        print key
+    with open(args.output, "wa") as outfile:
+      for key in keys:
+          print >> outfile, key
 
 def load_creds(path):
     with open(path, "r") as f:
