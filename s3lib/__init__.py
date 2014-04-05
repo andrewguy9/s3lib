@@ -62,7 +62,7 @@ def _s3_list_request(bucket, host, port, access_id, secret, marker=None, prefix=
         args['prefix'] = prefix
     if max_keys:
         args['max-keys'] = max_keys
-    (status, headers, xml) = _s3_request("GET", bucket, "", host, port, 5, access_id, secret, args, {}, '')
+    (status, headers, xml) = _s3_request("GET", bucket, "", host, port, 30, access_id, secret, args, {}, '')
     if status != httplib.OK:
         raise ValueError("S3 request failed with: %s" % (status))
     else:
