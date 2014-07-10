@@ -112,9 +112,7 @@ class Connection:
       headers["Date"] = http_now
       headers["Authorization"] = "AWS %s:%s" % (self.access_id, signature)
 
-      print "*********", self.host, self.port, timeout, "*****"
       conn = httplib.HTTPConnection(self.host, self.port, timeout=timeout)
-      print "*********", method, resource, content, headers, "*****"
       conn.request(method, resource, content, headers)
       resp = conn.getresponse()
       data = resp.read()
