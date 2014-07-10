@@ -24,11 +24,10 @@ class Connection:
   #######################
   # Interface Functions #
   #######################
-  def list_bucket(self, bucket, start, prefix, max_items):
-      #TODO handle max_items
+  def list_bucket(self, bucket, start, prefix, batch_size):
       more = True
       while more:
-          xml = self._s3_list_request(bucket, start, prefix, max_items)
+          xml = self._s3_list_request(bucket, start, prefix, batch_size)
           keys, truncated = _parse_list_response(xml)
           for key in keys:
               yield key
