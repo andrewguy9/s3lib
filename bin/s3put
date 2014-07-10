@@ -26,8 +26,7 @@ def main():
         except ValueError:
             raise ValueError("Header '%s' is not of form key:value" % header)
     with open(args.file, "r") as f:
-        data = f.read()
-    (status, headers, xml) = s3.put_object(args.bucket, args.object, data, headers)
+      (status, headers, xml) = s3.put_object(args.bucket, args.object, f, headers)
     print "HTTP Code: ", status
     for (header, value) in headers:
         print "%s: %s" % (header, value, )
