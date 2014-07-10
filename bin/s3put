@@ -2,7 +2,7 @@
 
 import argparse
 from os.path import expanduser
-from s3lib import put_object
+from s3lib import Connection
 
 parser = argparse.ArgumentParser("Program puts an object into s3")
 
@@ -17,6 +17,7 @@ parser.add_argument('file', type=str)
 def main():
     args = parser.parse_args()
     (access_id, secret_key) = load_creds(args.creds)
+    s3 = Connection(access_id, secret_key, args.host, args.port)
     headers = {}
     for header in args.headers:
         try:
@@ -26,7 +27,7 @@ def main():
             raise ValueError("Header '%s' is not of form key:value" % header)
     with open(args.file, "r") as f:
         data = f.read()
-    (status, headers, xml) = put_object(args.bucket, args.object, data, args.host, args.port, headers, access_id, secret_key)
+    (status, headers, xml) = s3.put_object(args.bucket, args.object, data, headers)
     print "HTTP Code: ", status
     for (header, value) in headers:
         print "%s: %s" % (header, value, )

@@ -2,7 +2,7 @@
 
 import argparse
 from os.path import expanduser
-from s3lib import head_object
+from s3lib import Connection
 
 parser = argparse.ArgumentParser("Program lists all the objects in an s3 bucket. Works on really big buckets")
 
@@ -15,8 +15,9 @@ parser.add_argument('objects', type=str, action='store', nargs='+', help='List o
 def main():
     args = parser.parse_args()
     (access_id, secret_key) = load_creds(args.creds)
+    s3 = Connection(access_id, secret_key, args.host, args.port)
     for obj in args.objects:
-        headers = head_object(args.bucket, obj, args.host, args.port, access_id, secret_key)
+        headers = s3.head_object(args.bucket, obj)
         for (header,value) in headers:
             print "%s: %s" % (header, value)
 

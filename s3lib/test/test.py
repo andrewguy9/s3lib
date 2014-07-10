@@ -1,5 +1,5 @@
 #!/usr/bin/env python
 
-import s3_lib
+import s3lib
 
-s3_lib.test_all()
+s3lib.test_all()

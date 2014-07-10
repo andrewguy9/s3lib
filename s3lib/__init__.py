@@ -3,124 +3,123 @@
 import hmac
 from hashlib import sha1
 import binascii
-import httplib 
+import httplib
 import time
 from xml.etree.ElementTree import fromstring as parse
 
-##############################
-# Python interface functinos #
-##############################
+class Connection:
 
-def list_bucket(bucket, host, port, access_id, secret, start, prefix, max_items):
-    #TODO handle max_items
-    more = True
-    while more:
-        xml = _s3_list_request(bucket, host, port, access_id, secret, start, prefix, max_items)
-        keys, truncated = _parse_list_response(xml)
-        for key in keys:
-            yield key
-        start = key # Next request should start from last request's last item.
-        more = truncated
+  def __init__(self, access_id, secret, host=None, port=None):
+    self.access_id = access_id
+    self.secret = secret
+    if port is None:
+      self.port = 80
+    else:
+      self.port = port
+    if host is None:
+      self.host = "s3.amazonaws.com"
+    else:
+      self.host = host
 
-def head_object(bucket, key, host, port, access_id, secret):
-    (status, headers) = _s3_head_request(bucket, key, host, port, access_id, secret)
-    return headers
+  #######################
+  # Interface Functions #
+  #######################
+  def list_bucket(self, bucket, start, prefix, max_items):
+      #TODO handle max_items
+      more = True
+      while more:
+          xml = self._s3_list_request(bucket, start, prefix, max_items)
+          keys, truncated = _parse_list_response(xml)
+          for key in keys:
+              yield key
+          start = key # Next request should start from last request's last item.
+          more = truncated
 
-def copy_object(src_bucket, src_key, dst_bucket, dst_key, host, port, headers, access_id, secret):
-    (status, headers, xml) = _s3_copy_request(src_bucket, src_key, dst_bucket, dst_key, host, port, headers, access_id, secret) 
-    return (status, headers, xml)
+  def head_object(self, bucket, key):
+      status, headers = self._s3_head_request(bucket, key)
+      return headers
 
-def put_object(bucket, key, data, host, port, headers, access_id, secret):
-    (status, headers, xml) = _s3_put_request(bucket, key, data, host, port, headers, access_id, secret)
-    return (status, headers, xml)
+  def copy_object(self, src_bucket, src_key, dst_bucket, dst_key, headers):
+      status, headers, xml = self._s3_copy_request(src_bucket, src_key, dst_bucket, dst_key, headers)
+      return (status, headers, xml)
 
-
-####################################
-# Http Response Handling Functions #
-####################################
-
-def _parse_list_response(xml):
-    is_truncated_path = '{http://s3.amazonaws.com/doc/2006-03-01/}IsTruncated'
-    key_path = '{http://s3.amazonaws.com/doc/2006-03-01/}Contents/{http://s3.amazonaws.com/doc/2006-03-01/}Key'
-    tree = parse(xml)
-    is_truncated = tree.find(is_truncated_path).text == 'true'
-    keys = tree.findall(key_path)
-    names = []
-    for key in keys:
-        names.append(key.text)
-    return (names, is_truncated)
+  def put_object(self, bucket, key, data, headers):
+      (status, headers, xml) = self._s3_put_request(bucket, key, data, headers)
+      return (status, headers, xml)
 
 ##########################
 # Http request Functions #
 ##########################
 
-def _s3_list_request(bucket, host, port, access_id, secret, marker=None, prefix=None, max_keys=None):
-    args = {}
-    if marker:
-        args['marker'] = marker
-    if prefix:
-        args['prefix'] = prefix
-    if max_keys:
-        args['max-keys'] = max_keys
-    (status, headers, xml) = _s3_request("GET", bucket, "", host, port, 30, access_id, secret, args, {}, '')
-    if status != httplib.OK:
-        raise ValueError("S3 request failed with: %s" % (status))
-    else:
-        return xml
+  def _s3_list_request(self, bucket, marker=None, prefix=None, max_keys=None):
+      args = {}
+      if marker:
+          args['marker'] = marker
+      if prefix:
+          args['prefix'] = prefix
+      if max_keys:
+          args['max-keys'] = max_keys
+      (status, headers, xml) = self._s3_request("GET", bucket, "", 30, args, {}, '')
+      if status != httplib.OK:
+          raise ValueError("S3 request failed with: %s" % (status))
+      else:
+          return xml
 
-def _s3_head_request(bucket, key, host, port, access_id, secret):
-    (status, headers, response) = _s3_request("HEAD", bucket, key, host, port, 2, access_id, secret, {}, {}, '')
-    if status != httplib.OK:
-        raise ValueError("S3 request failed with %s" % (status))
-    else:
-        return (status, headers)
+  def _s3_head_request(self, bucket, key):
+      (status, headers, response) = self._s3_request("HEAD", bucket, key, 2, {}, {}, '')
+      if status != httplib.OK:
+          raise ValueError("S3 request failed with %s" % (status))
+      else:
+          return (status, headers)
 
-def _s3_copy_request(src_bucket, src_key, dst_bucket, dst_key, host, port, headers, access_id, secret):
-    copy_headers = {'x-amz-copy-source':"/%s/%s" % (src_bucket, src_key)}
-    copy_headers['x-amz-metadata-directive'] = 'REPLACE'
-    headers = dict(headers.items() + copy_headers.items())
-    (status, resp_headers, response) = _s3_request("PUT", dst_bucket, dst_key, host, port, 5, access_id, secret, {}, headers, '')
-    if status != httplib.OK:
-        raise ValueError("S3 request failed with: %s" % (status))
-    else:
-        return (status, resp_headers, response)
+  def _s3_copy_request(self, src_bucket, src_key, dst_bucket, dst_key, headers):
+      copy_headers = {'x-amz-copy-source':"/%s/%s" % (src_bucket, src_key)}
+      copy_headers['x-amz-metadata-directive'] = 'REPLACE'
+      headers = dict(headers.items() + copy_headers.items())
+      (status, resp_headers, response) = self._s3_request("PUT", dst_bucket, dst_key, 5, {}, headers, '')
+      if status != httplib.OK:
+          raise ValueError("S3 request failed with: %s" % (status))
+      else:
+          return (status, resp_headers, response)
 
-def _s3_put_request(bucket, key, data, host, port, headers, access_id, secret):
-    args = {}
-    (status, headers, response) = _s3_request("PUT", bucket, key, host, port, 5, access_id, secret, args, headers, data)
-    #TODO YOU SHOULD HANDLE ERRORS
-    return (status, headers, response)
+  def _s3_put_request(self, bucket, key, data, headers):
+      args = {}
+      (status, headers, response) = self._s3_request("PUT", bucket, key, 5, args, headers, data)
+      #TODO YOU SHOULD HANDLE ERRORS
+      return (status, headers, response)
 
 
-def _s3_request(method, bucket, key, host, port, timeout, access_id, secret, args, headers, content):
-    http_now = time.strftime('%a, %d %b %G %H:%M:%S +0000', time.gmtime())
+  def _s3_request(self, method, bucket, key, timeout, args, headers, content):
+      http_now = time.strftime('%a, %d %b %G %H:%M:%S +0000', time.gmtime())
 
-    args = map( lambda x: "=".join(x), args.items())
-    args_str = "&".join(args)
-    if args_str:
-        args_str = "?" + args_str
-    canonical_resource = "/%s/%s" % (bucket, key)
-    resource = "/" + key + args_str
+      args = map( lambda x: "=".join(x), args.items())
+      args_str = "&".join(args)
+      if args_str:
+          args_str = "?" + args_str
+      canonical_resource = "/%s/%s" % (bucket, key)
+      resource = "/" + key + args_str
 
-    try:
-        content_type = headers['Content-Type']
-    except KeyError:
-        content_type = ''
-    content_md5 = "" #TODO fix this when you really support upload.
-    (amz_headers, reg_headers) = _split_headers(headers)
-    string_to_sign = _get_string_to_sign(method, content_md5, content_type, http_now, amz_headers, canonical_resource)
-    signature = _sign_string(secret, string_to_sign)
+      try:
+          content_type = headers['Content-Type']
+      except KeyError:
+          content_type = ''
+      content_md5 = "" #TODO fix this when you really support upload.
+      (amz_headers, reg_headers) = _split_headers(headers)
+      string_to_sign = _get_string_to_sign(method, content_md5, content_type, http_now, amz_headers, canonical_resource)
+      signature = _sign_string(self.secret, string_to_sign)
 
-    headers["Host"] = "%s.%s" % (bucket, host)
-    headers["Date"] = http_now
-    headers["Authorization"] = "AWS %s:%s" % (access_id, signature)
+      headers["Host"] = "%s.%s" % (bucket, self.host)
+      headers["Date"] = http_now
+      headers["Authorization"] = "AWS %s:%s" % (self.access_id, signature)
 
-    conn = httplib.HTTPConnection(host, port, timeout=timeout)
-    conn.request(method, resource, content, headers)
-    resp = conn.getresponse()
-    data = resp.read()
-    conn.close()
-    return (resp.status, resp.getheaders(), data)
+      print "*********", self.host, self.port, timeout, "*****"
+      conn = httplib.HTTPConnection(self.host, self.port, timeout=timeout)
+      print "*********", method, resource, content, headers, "*****"
+      conn.request(method, resource, content, headers)
+      resp = conn.getresponse()
+      data = resp.read()
+      conn.close()
+      return (resp.status, resp.getheaders(), data)
 
 ##########################
 # Signing Util Functions #
@@ -137,8 +136,8 @@ def _split_headers(headers):
             reg_headers[cur] = headers[cur]
     return (amz_headers, reg_headers)
 
-def _sign_string(key, string_to_sign):
-    hashed = hmac.new(key, string_to_sign, sha1)
+def _sign_string(secret, string_to_sign):
+    hashed = hmac.new(secret, string_to_sign, sha1)
     return binascii.b2a_base64(hashed.digest()).strip()
 
 def _get_string_to_sign(method, content_md5, content_type, http_date, amz_headers, resource):
@@ -149,6 +148,21 @@ def _get_string_to_sign(method, content_md5, content_type, http_date, amz_header
         header_str+="\n"
     string = "%s\n%s\n%s\n%s\n%s%s" % (method, content_md5, content_type, http_date, header_str, resource, )
     return string
+
+####################################
+# Http Response Handling Functions #
+####################################
+
+def _parse_list_response(xml):
+    is_truncated_path = '{http://s3.amazonaws.com/doc/2006-03-01/}IsTruncated'
+    key_path = '{http://s3.amazonaws.com/doc/2006-03-01/}Contents/{http://s3.amazonaws.com/doc/2006-03-01/}Key'
+    tree = parse(xml)
+    is_truncated = tree.find(is_truncated_path).text == 'true'
+    keys = tree.findall(key_path)
+    names = []
+    for key in keys:
+        names.append(key.text)
+    return (names, is_truncated)
 
 ###########
 # Testing #
