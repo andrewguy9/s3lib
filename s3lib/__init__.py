@@ -104,9 +104,11 @@ class Connection:
 
   def _s3_put_request(self, bucket, key, data, headers):
       args = {}
-      (status, headers, response) = self._s3_request("PUT", bucket, key, 5, args, headers, data)
-      #TODO YOU SHOULD HANDLE ERRORS
-      return (status, headers, response)
+      (status, resp_headers, response) = self._s3_request("PUT", bucket, key, 5, args, headers, data)
+      if status != httplib.OK:
+          raise ValueError("S3 request failed with: %s" % (status))
+      else:
+          return (status, resp_headers, response)
 
   def _s3_request(self, method, bucket, key, timeout, args, headers, content):
       http_now = time.strftime('%a, %d %b %G %H:%M:%S +0000', time.gmtime())
