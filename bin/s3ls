@@ -3,12 +3,13 @@
 import argparse
 from os.path import expanduser
 from s3lib import Connection
+from safeoutput import open as safeopen
 
 parser = argparse.ArgumentParser("Program lists all the objects in an s3 bucket. Works on really big buckets")
 
 parser.add_argument('--host', type=str, dest='host', help='Name of host')
 parser.add_argument('--port', type=int, dest='port', help='Port to connect to')
-parser.add_argument('--output', type=str, dest='output', default='/dev/stdout', help='Name of output')
+parser.add_argument('--output', type=str, dest='output', default=None, help='Name of output')
 parser.add_argument('--creds', type=str, dest='creds', default=expanduser("~/.s3"), help='Name of file to find aws access id and secret key')
 parser.add_argument('--mark', type=str, dest='mark', help='Starting point for enumeration')
 parser.add_argument('--prefix', type=str, dest='prefix', help='Prefix to match on')
@@ -20,7 +21,7 @@ def main():
     (access_id, secret_key) = load_creds(args.creds)
     s3 = Connection(access_id, secret_key, args.host, args.port)
     keys = s3.list_bucket(args.bucket, args.mark, args.prefix, args.batch)
-    with open(args.output, "wa") as outfile:
+    with safeopen(args.output) as outfile:
       for key in keys:
           print >> outfile, key
 
