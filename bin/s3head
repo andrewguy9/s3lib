@@ -3,11 +3,13 @@
 import argparse
 from os.path import expanduser
 from s3lib import Connection
+import json
 
 parser = argparse.ArgumentParser("Program lists all the objects in an s3 bucket. Works on really big buckets")
 
 parser.add_argument('--host', type=str, dest='host', action='store', default='s3.amazonaws.com', help='Name of host')
 parser.add_argument('--port', type=int, dest='port', action='store', default=80, help='Port to connect to')
+parser.add_argument('--json', action='store_true', help='Print in json format')
 parser.add_argument('--creds', type=str, dest='creds', action='store', default=expanduser("~/.s3"), help='Name of file to find aws access id and secret key')
 parser.add_argument('bucket', type=str, action='store', help='Name of bucket')
 parser.add_argument('objects', type=str, action='store', nargs='+', help='List of urls to query')
@@ -18,8 +20,11 @@ def main():
     s3 = Connection(access_id, secret_key, args.host, args.port)
     for obj in args.objects:
         headers = s3.head_object(args.bucket, obj)
-        for (header,value) in headers:
-            print "%s: %s" % (header, value)
+        if args.json:
+          print json.dumps({"object":obj, "headers":dict(headers)})
+        else:
+          for (header,value) in headers:
+              print "%s: %s" % (header, value)
 
 def load_creds(path):
     with open(path, "r") as f:
