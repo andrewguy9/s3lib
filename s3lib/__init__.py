@@ -38,6 +38,10 @@ class Connection:
       status, headers = self._s3_head_request(bucket, key)
       return headers
 
+  def delete_object(self, bucket, key):
+      status, headers = self._s3_delete_request(bucket, key)
+      return (status, headers)
+
   def copy_object(self, src_bucket, src_key, dst_bucket, dst_key, headers):
       status, headers, xml = self._s3_copy_request(src_bucket, src_key, dst_bucket, dst_key, headers)
       return (status, headers, xml)
@@ -71,6 +75,13 @@ class Connection:
       else:
           return (status, headers)
 
+  def _s3_delete_request(self, bucket, key):
+      (status, headers, response) = self._s3_request("DELETE", bucket, key, 2, {}, {}, '')
+      if status != httplib.NO_CONTENT:
+          raise ValueError("S3 request failed with %s" % (status))
+      else:
+          return (status, headers)
+
   def _s3_copy_request(self, src_bucket, src_key, dst_bucket, dst_key, headers):
       copy_headers = {'x-amz-copy-source':"/%s/%s" % (src_bucket, src_key)}
       copy_headers['x-amz-metadata-directive'] = 'REPLACE'
@@ -86,7 +97,6 @@ class Connection:
       (status, headers, response) = self._s3_request("PUT", bucket, key, 5, args, headers, data)
       #TODO YOU SHOULD HANDLE ERRORS
       return (status, headers, response)
-
 
   def _s3_request(self, method, bucket, key, timeout, args, headers, content):
       http_now = time.strftime('%a, %d %b %G %H:%M:%S +0000', time.gmtime())

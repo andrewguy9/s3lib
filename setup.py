@@ -8,7 +8,7 @@ setup(
     author='Andrew Thomson',
     author_email='athomsonguy@gmail.com',
     packages=['s3lib', 's3lib.test'],
-    scripts=['bin/s3cp', 'bin/s3head', 'bin/s3ls', 'bin/s3put'],
+    scripts=['bin/s3cp', 'bin/s3head', 'bin/s3rm', 'bin/s3ls', 'bin/s3put'],
     url='http://pypi.python.org/pypi/S3Lib/',
     license='LICENSE.txt',
     description='Library and utilities for interfacing wtih S3',
