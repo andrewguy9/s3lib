@@ -127,7 +127,7 @@ class Connection:
       content_md5 = "" #TODO fix this when you really support upload.
       (amz_headers, reg_headers) = _split_headers(headers)
       string_to_sign = _get_string_to_sign(method, content_md5, content_type, http_now, amz_headers, canonical_resource)
-      signature = _sign_string(self.secret, string_to_sign)
+      signature = sign(self.secret, string_to_sign)
 
       headers["Host"] = "%s.%s" % (bucket, self.host)
       headers["Date"] = http_now
@@ -155,7 +155,7 @@ def _split_headers(headers):
             reg_headers[cur] = headers[cur]
     return (amz_headers, reg_headers)
 
-def _sign_string(secret, string_to_sign):
+def sign(secret, string_to_sign):
     hashed = hmac.new(secret, string_to_sign, sha1)
     return binascii.b2a_base64(hashed.digest()).strip()
 
@@ -208,7 +208,7 @@ def validate_signature(string, expected_string, expected_signature):
     print "---\n" + expected_string + "\n---\n"
     assert(string == expected_string)
     secret = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
-    signature = _sign_string(secret, string)
+    signature = sign(secret, string)
     print "Checking sigs"
     print signature
     print expected_signature
