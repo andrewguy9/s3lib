@@ -34,6 +34,9 @@ class Connection:
           start = key # Next request should start from last request's last item.
           more = truncated
 
+  def get_object(self, bucket, key):
+      return self._s3_get_request(bucket, key)
+
   def head_object(self, bucket, key):
       status, headers = self._s3_head_request(bucket, key)
       return headers
@@ -67,6 +70,13 @@ class Connection:
           raise ValueError("S3 request failed with: %s" % (status))
       else:
           return xml
+
+  def _s3_get_request(self, bucket, key):
+      (status, headers, response) = self._s3_request("GET", bucket, key, 2, {}, {}, '')
+      if status != httplib.OK:
+          raise ValueError("S3 request failed with %s" % (status))
+      else:
+          return response
 
   def _s3_head_request(self, bucket, key):
       (status, headers, response) = self._s3_request("HEAD", bucket, key, 2, {}, {}, '')
@@ -124,7 +134,7 @@ class Connection:
       conn = httplib.HTTPConnection(self.host, self.port, timeout=timeout)
       conn.request(method, resource, content, headers)
       resp = conn.getresponse()
-      data = resp.read()
+      data = resp.read() #TODO MIGHT NOT WANT TO READ WHOLE KEY.
       conn.close()
       return (resp.status, resp.getheaders(), data)
 

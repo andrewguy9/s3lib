@@ -3,7 +3,7 @@
 import argparse
 from os.path import expanduser
 from s3lib import Connection
-from safeoutput import SafeOutputFile
+from safeoutput import open as safeopen
 
 parser = argparse.ArgumentParser("Program lists all the objects in an s3 bucket. Works on really big buckets")
 
@@ -21,9 +21,9 @@ def main():
     args = parser.parse_args()
     (access_id, secret_key) = load_creds(args.creds)
     s3 = Connection(access_id, secret_key, args.host, args.port)
-    with SafeOutputFile(args.output) as outfile:
-        (key, headers) = s3.get_object(args.bucket, args.key)
-        print >> outfile, key
+    with safeopen(args.output) as outfile:
+        data = s3.get_object(args.bucket, args.key)
+        outfile.write(data)
 
 def load_creds(path):
     with open(path, "r") as f:
