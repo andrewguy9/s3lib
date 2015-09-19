@@ -137,7 +137,11 @@ class Connection:
     string_to_sign = _get_string_to_sign(method, content_md5, content_type, http_now, amz_headers, canonical_resource)
     signature = sign(self.secret, string_to_sign)
 
-    headers["Host"] = "%s.%s" % (bucket, self.host)
+    if bucket:
+      host = bucket + "." + self.host
+    else:
+      host = self.host
+    headers["Host"] = host
     headers["Date"] = http_now
     headers["Authorization"] = "AWS %s:%s" % (self.access_id, signature)
 
