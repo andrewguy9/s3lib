@@ -117,8 +117,16 @@ class Connection:
     args_str = "&".join(args)
     if args_str:
       args_str = "?" + args_str
-    canonical_resource = "/%s/%s" % (bucket, key)
-    resource = "/" + key + args_str
+    canonical_resource = "/"
+    if bucket:
+      canonical_resource += bucket + "/"
+      if key:
+        canonical_resource += key
+
+    resource = "/"
+    if key:
+      resource += key
+    resource += args_str
 
     try:
       content_type = headers['Content-Type']
