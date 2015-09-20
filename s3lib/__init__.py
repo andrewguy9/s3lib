@@ -24,6 +24,12 @@ class Connection:
   #######################
   # Interface Functions #
   #######################
+  def list_buckets(self):
+    xml = self._s3_get_service_request()
+    buckets = _parse_get_service_response(xml)
+    for bucket in buckets:
+      yield bucket
+
   def list_bucket(self, bucket, start, prefix, batch_size):
     more = True
     while more:
@@ -56,6 +62,13 @@ class Connection:
 ##########################
 # Http request Functions #
 ##########################
+
+  def _s3_get_service_request(self):
+    (status, headers, xml) = self._s3_request("GET", None, None, 30, {}, {}, '')
+    if status != httplib.OK:
+      raise ValueError("S3 request failed with: %s" % (status))
+    else:
+      return xml
 
   def _s3_list_request(self, bucket, marker=None, prefix=None, max_keys=None):
     args = {}
@@ -194,6 +207,15 @@ def _parse_list_response(xml):
   for key in keys:
     names.append(key.text)
   return (names, is_truncated)
+
+def _parse_get_service_response(xml):
+  bucket_path = '{http://s3.amazonaws.com/doc/2006-03-01/}Buckets/{http://s3.amazonaws.com/doc/2006-03-01/}Bucket/{http://s3.amazonaws.com/doc/2006-03-01/}Name'
+  tree = parse(xml)
+  buckets = tree.findall(bucket_path)
+  names = []
+  for bucket in buckets:
+    names.append(bucket.text)
+  return (names)
 
 ###########
 # Testing #

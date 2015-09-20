@@ -18,16 +18,21 @@ ls_parser.add_argument('--creds', type=str, dest='creds', default=expanduser("~/
 ls_parser.add_argument('--mark', type=str, dest='mark', help='Starting point for enumeration')
 ls_parser.add_argument('--prefix', type=str, dest='prefix', help='Prefix to match on')
 ls_parser.add_argument('--batch', type=str, dest='batch', help='Batch size for s3 queries')
-ls_parser.add_argument('bucket', type=str, help='Name of bucket')
+ls_parser.add_argument('bucket', type=str, nargs="?", default=None, help='Name of bucket')
 
 def ls_main():
   args = ls_parser.parse_args()
   (access_id, secret_key) = load_creds(args.creds)
   s3 = Connection(access_id, secret_key, args.host, args.port)
-  keys = s3.list_bucket(args.bucket, args.mark, args.prefix, args.batch)
   with safeopen(args.output) as outfile:
-    for key in keys:
-      print >> outfile, key
+    if args.bucket:
+      keys = s3.list_bucket(args.bucket, args.mark, args.prefix, args.batch)
+      for key in keys:
+        print >> outfile, key
+    else:
+      buckets = s3.list_buckets()
+      for bucket in buckets:
+        print >> outfile, bucket
 
 get_parser = argparse.ArgumentParser("Program lists all the objects in an s3 bucket. Works on really big buckets")
 get_parser.add_argument('--host', type=str, dest='host', help='Name of host')
