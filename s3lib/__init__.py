@@ -9,7 +9,10 @@ from xml.etree.ElementTree import fromstring as parse
 
 class Connection:
 
-  def __init__(self, access_id, secret, host=None, port=None):
+  ############################
+  # Python special functions #
+  ############################
+  def __init__(self, access_id, secret, host=None, port=None, conn_timeout=None):
     self.access_id = access_id
     self.secret = secret
     if port is None:
@@ -20,6 +23,14 @@ class Connection:
       self.host = "s3.amazonaws.com"
     else:
       self.host = host
+    self.conn_timeout = conn_timeout
+
+  def __enter__(self):
+    self._connect()
+    return self
+
+  def __exit__(self, type, value, traceback):
+    self._disconnect()
 
   #######################
   # Interface Functions #
@@ -41,6 +52,7 @@ class Connection:
       more = truncated
 
   def get_object(self, bucket, key):
+    #TODO Want to replace with some enter, exit struct.
     return self._s3_get_request(bucket, key)
 
   def head_object(self, bucket, key):
@@ -52,23 +64,23 @@ class Connection:
     return (status, headers)
 
   def copy_object(self, src_bucket, src_key, dst_bucket, dst_key, headers):
-    status, headers, xml = self._s3_copy_request(src_bucket, src_key, dst_bucket, dst_key, headers)
-    return (status, headers, xml)
+    (status, headers) = self._s3_copy_request(src_bucket, src_key, dst_bucket, dst_key, headers)
+    return (status, headers)
 
   def put_object(self, bucket, key, data, headers):
-    (status, headers, xml) = self._s3_put_request(bucket, key, data, headers)
-    return (status, headers, xml)
+    (status, headers) = self._s3_put_request(bucket, key, data, headers)
+    return (status, headers)
 
 ##########################
 # Http request Functions #
 ##########################
 
   def _s3_get_service_request(self):
-    (status, headers, xml) = self._s3_request("GET", None, None, 30, {}, {}, '')
-    if status != httplib.OK:
-      raise ValueError("S3 request failed with: %s" % (status))
+    resp = self._s3_request("GET", None, None, {}, {}, '')
+    if resp.status != httplib.OK:
+      raise ValueError("S3 request failed with: %s" % (resp.status))
     else:
-      return xml
+      return resp.read()
 
   def _s3_list_request(self, bucket, marker=None, prefix=None, max_keys=None):
     args = {}
@@ -78,52 +90,55 @@ class Connection:
       args['prefix'] = prefix
     if max_keys:
       args['max-keys'] = max_keys
-    (status, headers, xml) = self._s3_request("GET", bucket, "", 30, args, {}, '')
-    if status != httplib.OK:
-      raise ValueError("S3 request failed with: %s" % (status))
+    resp = self._s3_request("GET", bucket, "", args, {}, '')
+    if resp.status != httplib.OK:
+      raise ValueError("S3 request failed with: %s" % (resp.status))
     else:
-      return xml
+      return resp.read()
 
   def _s3_get_request(self, bucket, key):
-    (status, headers, response) = self._s3_request("GET", bucket, key, 2, {}, {}, '')
-    if status != httplib.OK:
-      raise ValueError("S3 request failed with %s" % (status))
+    resp = self._s3_request("GET", bucket, key, {}, {}, '')
+    if resp.status != httplib.OK:
+      raise ValueError("S3 request failed with %s" % (resp.status))
     else:
-      return response
+      return resp.read() #TODO LARGE OBJECTS SHOULD NOT BE READ IN TOTALITY.
 
   def _s3_head_request(self, bucket, key):
-    (status, headers, response) = self._s3_request("HEAD", bucket, key, 2, {}, {}, '')
-    if status != httplib.OK:
-      raise ValueError("S3 request failed with %s" % (status))
+    resp = self._s3_request("HEAD", bucket, key, {}, {}, '')
+    if resp.status != httplib.OK:
+      raise ValueError("S3 request failed with %s" % (resp.status))
     else:
-      return (status, headers)
+      resp.read() #NOTE: Should be zero size response. Required to reset the connection.
+      return (resp.status, resp.getheaders())
 
   def _s3_delete_request(self, bucket, key):
-    (status, headers, response) = self._s3_request("DELETE", bucket, key, 2, {}, {}, '')
-    if status != httplib.NO_CONTENT:
-      raise ValueError("S3 request failed with %s" % (status))
+    resp = self._s3_request("DELETE", bucket, key, {}, {}, '')
+    if resp.status != httplib.NO_CONTENT:
+      raise ValueError("S3 request failed with %s" % (resp.status))
     else:
-      return (status, headers)
+      resp.read() #NOTE: Should be zero size response. Required to reset the connection
+      return (resp.status, resp.getheaders())
 
   def _s3_copy_request(self, src_bucket, src_key, dst_bucket, dst_key, headers):
     copy_headers = {'x-amz-copy-source':"/%s/%s" % (src_bucket, src_key)}
     copy_headers['x-amz-metadata-directive'] = 'REPLACE'
     headers = dict(headers.items() + copy_headers.items())
-    (status, resp_headers, response) = self._s3_request("PUT", dst_bucket, dst_key, 5, {}, headers, '')
-    if status != httplib.OK:
-      raise ValueError("S3 request failed with: %s" % (status))
+    resp = self._s3_request("PUT", dst_bucket, dst_key, {}, headers, '')
+    if resp.status != httplib.OK:
+      raise ValueError("S3 request failed with: %s" % (resp.status))
     else:
-      return (status, resp_headers, response)
+      return (resp.status, resp.getheaders())
 
   def _s3_put_request(self, bucket, key, data, headers):
     args = {}
-    (status, resp_headers, response) = self._s3_request("PUT", bucket, key, 5, args, headers, data)
-    if status != httplib.OK:
-      raise ValueError("S3 request failed with: %s" % (status))
+    resp = self._s3_request("PUT", bucket, key, args, headers, data)
+    if resp.status != httplib.OK:
+      raise ValueError("S3 request failed with: %s" % (resp.status))
     else:
-      return (status, resp_headers, response)
+      resp.read() #NOTE: Should be zero length response. Required to reset the connection.
+      return (resp.status, resp.getheaders())
 
-  def _s3_request(self, method, bucket, key, timeout, args, headers, content):
+  def _s3_request(self, method, bucket, key, args, headers, content):
     http_now = time.strftime('%a, %d %b %G %H:%M:%S +0000', time.gmtime())
 
     args = map( lambda x: "=".join(x), args.items())
@@ -157,13 +172,20 @@ class Connection:
     headers["Host"] = host
     headers["Date"] = http_now
     headers["Authorization"] = "AWS %s:%s" % (self.access_id, signature)
+    headers["Connection"] = "keep-alive"
 
-    conn = httplib.HTTPConnection(self.host, self.port, timeout=timeout)
-    conn.request(method, resource, content, headers)
-    resp = conn.getresponse()
-    data = resp.read() #TODO MIGHT NOT WANT TO READ WHOLE KEY.
-    conn.close()
-    return (resp.status, resp.getheaders(), data)
+    self.conn.request(method, resource, content, headers)
+    resp = self.conn.getresponse()
+    return resp
+
+###########################
+# S3 Connection Functions #
+###########################
+  def _connect(self):
+    self.conn = httplib.HTTPConnection(self.host, self.port, timeout=self.conn_timeout)
+
+  def _disconnect(self):
+    self.conn.close()
 
 ##########################
 # Signing Util Functions #
