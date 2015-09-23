@@ -36,12 +36,14 @@ class Connection:
   # Interface Functions #
   #######################
   def list_buckets(self):
+    """ list all buckets in account """
     xml = self._s3_get_service_request()
     buckets = _parse_get_service_response(xml)
     for bucket in buckets:
       yield bucket
 
   def list_bucket(self, bucket, start, prefix, batch_size):
+    """ list contents of individual bucket """
     more = True
     while more:
       xml = self._s3_list_request(bucket, start, prefix, batch_size)
@@ -52,22 +54,27 @@ class Connection:
       more = truncated
 
   def get_object(self, bucket, key):
+    """ pull down bucket object by key """
     #TODO Want to replace with some enter, exit struct.
     return self._s3_get_request(bucket, key)
 
   def head_object(self, bucket, key):
+    """ get request metadata for key in bucket """
     status, headers = self._s3_head_request(bucket, key)
     return headers
 
   def delete_object(self, bucket, key):
+    """ delete key from bucket """
     status, headers = self._s3_delete_request(bucket, key)
     return (status, headers)
 
   def copy_object(self, src_bucket, src_key, dst_bucket, dst_key, headers):
+    """ copy key from one bucket to another """
     (status, headers) = self._s3_copy_request(src_bucket, src_key, dst_bucket, dst_key, headers)
     return (status, headers)
 
   def put_object(self, bucket, key, data, headers):
+    """ push object from local to bucket """
     (status, headers) = self._s3_put_request(bucket, key, data, headers)
     return (status, headers)
 
