@@ -86,8 +86,7 @@ class Connection:
     resp = self._s3_request("GET", None, None, {}, {}, '')
     if resp.status != httplib.OK:
       raise ValueError("S3 request failed with: %s" % (resp.status))
-    else:
-      return resp.read()
+    return resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
 
   def _s3_list_request(self, bucket, marker=None, prefix=None, max_keys=None):
     args = {}
@@ -100,31 +99,27 @@ class Connection:
     resp = self._s3_request("GET", bucket, "", args, {}, '')
     if resp.status != httplib.OK:
       raise ValueError("S3 request failed with: %s" % (resp.status))
-    else:
-      return resp.read()
+    return resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
 
   def _s3_get_request(self, bucket, key):
     resp = self._s3_request("GET", bucket, key, {}, {}, '')
     if resp.status != httplib.OK:
       raise ValueError("S3 request failed with %s" % (resp.status))
-    else:
-      return resp.read() #TODO LARGE OBJECTS SHOULD NOT BE READ IN TOTALITY.
+    return resp
 
   def _s3_head_request(self, bucket, key):
     resp = self._s3_request("HEAD", bucket, key, {}, {}, '')
     if resp.status != httplib.OK:
       raise ValueError("S3 request failed with %s" % (resp.status))
-    else:
-      resp.read() #NOTE: Should be zero size response. Required to reset the connection.
-      return (resp.status, resp.getheaders())
+    resp.read() #NOTE: Should be zero size response. Required to reset the connection.
+    return (resp.status, resp.getheaders())
 
   def _s3_delete_request(self, bucket, key):
     resp = self._s3_request("DELETE", bucket, key, {}, {}, '')
     if resp.status != httplib.NO_CONTENT:
       raise ValueError("S3 request failed with %s" % (resp.status))
-    else:
-      resp.read() #NOTE: Should be zero size response. Required to reset the connection
-      return (resp.status, resp.getheaders())
+    resp.read() #NOTE: Should be zero size response. Required to reset the connection
+    return (resp.status, resp.getheaders())
 
   def _s3_copy_request(self, src_bucket, src_key, dst_bucket, dst_key, headers):
     copy_headers = {'x-amz-copy-source':"/%s/%s" % (src_bucket, src_key)}
@@ -133,17 +128,15 @@ class Connection:
     resp = self._s3_request("PUT", dst_bucket, dst_key, {}, headers, '')
     if resp.status != httplib.OK:
       raise ValueError("S3 request failed with: %s" % (resp.status))
-    else:
-      return (resp.status, resp.getheaders())
+    return (resp.status, resp.getheaders())
 
   def _s3_put_request(self, bucket, key, data, headers):
     args = {}
     resp = self._s3_request("PUT", bucket, key, args, headers, data)
     if resp.status != httplib.OK:
       raise ValueError("S3 request failed with: %s" % (resp.status))
-    else:
-      resp.read() #NOTE: Should be zero length response. Required to reset the connection.
-      return (resp.status, resp.getheaders())
+    resp.read() #NOTE: Should be zero length response. Required to reset the connection.
+    return (resp.status, resp.getheaders())
 
   def _s3_request(self, method, bucket, key, args, headers, content):
     http_now = time.strftime('%a, %d %b %G %H:%M:%S +0000', time.gmtime())
