@@ -10,6 +10,13 @@ def load_creds(path):
     secret_key = f.readline().strip()
     return (access_id, secret_key)
 
+_BUFFSIZE = 65536
+def copy(src, dst):
+      buf = src.read(_BUFFSIZE)
+      while len(buf) > 0:
+        dst.write(buf)
+        buf = src.read(_BUFFSIZE)
+
 ls_parser = argparse.ArgumentParser("Program lists all the objects in an s3 bucket. Works on really big buckets")
 ls_parser.add_argument('--host', type=str, dest='host', help='Name of host')
 ls_parser.add_argument('--port', type=int, dest='port', help='Port to connect to')
@@ -51,7 +58,7 @@ def get_main():
   with Connection(access_id, secret_key, args.host, args.port) as s3:
     with safeopen(args.output) as outfile:
       data = s3.get_object(args.bucket, args.key)
-      outfile.write(data)
+      copy(data, outfile)
 
 cp_parser = argparse.ArgumentParser("Program copies an object from one location to another")
 cp_parser.add_argument('--host', type=str, dest='host', action='store', default='s3.amazonaws.com', help='Name of host')
