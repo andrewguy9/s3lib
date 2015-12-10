@@ -3,12 +3,32 @@ from os.path import expanduser
 from s3lib import Connection
 from s3lib import sign
 from safeoutput import open as safeopen
+from os import environ
 
-def load_creds(path):
+def load_creds_from_file(path):
   with open(path, "r") as f:
     access_id = f.readline().strip()
     secret_key = f.readline().strip()
     return (access_id, secret_key)
+
+def load_creds_from_vars():
+  access_id = environ.get('AWS_ACCESS_KEY_ID')
+  secret_key = environ.get('AWS_SECRET_ACCESS_KEY')
+  if  access_id is not None and secret_key is not None:
+    return (access_id, secret_key)
+  else:
+    return None
+
+def load_creds(path):
+  # Use the path if provided.
+  if path is not None:
+    return load_creds_from_file(path)
+  # Use env vars if provided
+  creds = load_creds_from_vars()
+  if creds is not None:
+    return creds
+  # Use home dir if provided
+  return load_creds_from_file(expanduser("~/.s3"))
 
 _BUFFSIZE = 65536
 def copy(src, dst):
@@ -21,7 +41,7 @@ ls_parser = argparse.ArgumentParser("Program lists all the objects in an s3 buck
 ls_parser.add_argument('--host', type=str, dest='host', help='Name of host')
 ls_parser.add_argument('--port', type=int, dest='port', help='Port to connect to')
 ls_parser.add_argument('--output', type=str, dest='output', default=None, help='Name of output')
-ls_parser.add_argument('--creds', type=str, dest='creds', default=expanduser("~/.s3"), help='Name of file to find aws access id and secret key')
+ls_parser.add_argument('--creds', type=str, dest='creds', default=None, help='Name of file to find aws access id and secret key')
 ls_parser.add_argument('--mark', type=str, dest='mark', help='Starting point for enumeration')
 ls_parser.add_argument('--prefix', type=str, dest='prefix', help='Prefix to match on')
 ls_parser.add_argument('--batch', type=str, dest='batch', help='Batch size for s3 queries')
@@ -45,7 +65,7 @@ get_parser = argparse.ArgumentParser("Program lists all the objects in an s3 buc
 get_parser.add_argument('--host', type=str, dest='host', help='Name of host')
 get_parser.add_argument('--port', type=int, dest='port', help='Port to connect to')
 get_parser.add_argument('--output', type=str, dest='output', default=None, help='Name of output')
-get_parser.add_argument('--creds', type=str, dest='creds', default=expanduser("~/.s3"), help='Name of file to find aws access id and secret key')
+get_parser.add_argument('--creds', type=str, dest='creds', default=None, help='Name of file to find aws access id and secret key')
 get_parser.add_argument('--mark', type=str, dest='mark', help='Starting point for enumeration')
 get_parser.add_argument('--prefix', type=str, dest='prefix', help='Prefix to match on')
 get_parser.add_argument('--batch', type=str, dest='batch', help='Batch size for s3 queries')
@@ -63,7 +83,7 @@ def get_main():
 cp_parser = argparse.ArgumentParser("Program copies an object from one location to another")
 cp_parser.add_argument('--host', type=str, dest='host', action='store', default='s3.amazonaws.com', help='Name of host')
 cp_parser.add_argument('--port', type=int, dest='port', action='store', default=80, help='Port to connect to')
-cp_parser.add_argument('--creds', type=str, dest='creds', action='store', default=expanduser("~/.s3"), help='Name of file to find aws access id and secret key')
+cp_parser.add_argument('--creds', type=str, dest='creds', action='store', default=None, help='Name of file to find aws access id and secret key')
 cp_parser.add_argument('--header', type=str, dest='headers', default=[], action='store', nargs='*')
 cp_parser.add_argument('src_bucket', type=str)
 cp_parser.add_argument('src_object', type=str)
@@ -89,7 +109,7 @@ head_parser = argparse.ArgumentParser("Program lists all the objects in an s3 bu
 head_parser.add_argument('--host', type=str, dest='host', action='store', default='s3.amazonaws.com', help='Name of host')
 head_parser.add_argument('--port', type=int, dest='port', action='store', default=80, help='Port to connect to')
 head_parser.add_argument('--json', action='store_true', help='Print in json format')
-head_parser.add_argument('--creds', type=str, dest='creds', action='store', default=expanduser("~/.s3"), help='Name of file to find aws access id and secret key')
+head_parser.add_argument('--creds', type=str, dest='creds', action='store', default=None, help='Name of file to find aws access id and secret key')
 head_parser.add_argument('bucket', type=str, action='store', help='Name of bucket')
 head_parser.add_argument('objects', type=str, action='store', nargs='+', help='List of urls to query')
 
@@ -108,7 +128,7 @@ def head_main():
 put_parser = argparse.ArgumentParser("Program puts an object into s3")
 put_parser.add_argument('--host', type=str, dest='host', action='store', default='s3.amazonaws.com', help='Name of host')
 put_parser.add_argument('--port', type=int, dest='port', action='store', default=80, help='Port to connect to')
-put_parser.add_argument('--creds', type=str, dest='creds', action='store', default=expanduser("~/.s3"), help='Name of file to find aws access id and secret key')
+put_parser.add_argument('--creds', type=str, dest='creds', action='store', default=None, help='Name of file to find aws access id and secret key')
 put_parser.add_argument('--header', type=str, dest='headers', default=[], action='store', nargs='*')
 put_parser.add_argument('bucket', type=str)
 put_parser.add_argument('object', type=str)
@@ -135,7 +155,7 @@ def put_main():
 rm_parser = argparse.ArgumentParser("Program deletes s3 keys.")
 rm_parser.add_argument('--host', type=str, dest='host', action='store', default='s3.amazonaws.com', help='Name of host')
 rm_parser.add_argument('--port', type=int, dest='port', action='store', default=80, help='Port to connect to')
-rm_parser.add_argument('--creds', type=str, dest='creds', action='store', default=expanduser("~/.s3"), help='Name of file to find aws access id and secret key')
+rm_parser.add_argument('--creds', type=str, dest='creds', action='store', default=None, help='Name of file to find aws access id and secret key')
 rm_parser.add_argument('bucket', type=str, action='store', help='Name of bucket')
 rm_parser.add_argument('objects', type=str, action='store', nargs='+', help='List of urls to query')
 
@@ -147,7 +167,7 @@ def rm_main():
       status, headers = s3.delete_object(args.bucket, obj)
 
 sign_parser = argparse.ArgumentParser("Sign an S3 form.")
-sign_parser.add_argument('--creds', type=str, dest='creds', action='store', default=expanduser("~/.s3"), help='Name of file to find aws access id and secret key')
+sign_parser.add_argument('--creds', type=str, dest='creds', action='store', default=None, help='Name of file to find aws access id and secret key')
 sign_parser.add_argument('file', type=str)
 
 def sign_main():
