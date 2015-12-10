@@ -4,7 +4,7 @@ from setuptools import setup
 
 setup(
     name='S3Lib',
-    version='0.2.0',
+    version='0.3.0',
     author='Andrew Thomson',
     author_email='athomsonguy@gmail.com',
     packages=['s3lib', 's3lib.test'],
