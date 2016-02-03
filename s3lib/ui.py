@@ -1,4 +1,5 @@
 import argparse
+import base64
 from os.path import expanduser
 from s3lib import Connection
 from s3lib import sign
@@ -176,6 +177,6 @@ def sign_main():
   with open(args.file, 'r') as f:
     policy_document = f.read()
   policy = base64.b64encode(policy_document)
-  signature = sign(policy)
+  signature = sign(secret_key, policy)
   print policy
   print signature
