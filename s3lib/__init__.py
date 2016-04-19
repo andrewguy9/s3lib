@@ -2,6 +2,7 @@
 
 import hmac
 from hashlib import sha1
+from hashlib import md5
 import binascii
 import httplib
 import time
@@ -160,7 +161,7 @@ class Connection:
       content_type = headers['Content-Type']
     except KeyError:
       content_type = ''
-    content_md5 = "" #TODO fix this when you really support upload.
+    content_md5 = sign_content_if_possible(content)
     (amz_headers, reg_headers) = _split_headers(headers)
     string_to_sign = _get_string_to_sign(method, content_md5, content_type, http_now, amz_headers, canonical_resource)
     signature = sign(self.secret, string_to_sign)
@@ -205,6 +206,16 @@ def _split_headers(headers):
 def sign(secret, string_to_sign):
   hashed = hmac.new(secret, string_to_sign, sha1)
   return binascii.b2a_base64(hashed.digest()).strip()
+
+def sign_content_if_possible(content):
+  #TODO if the content is a proper file, it would also be possible.
+  if content != '' and isinstance(content, basestring):
+    return sign_content(content)
+  else:
+    return ""
+
+def sign_content(content):
+  return binascii.b2a_base64(md5(content).digest()).strip()
 
 def _get_string_to_sign(method, content_md5, content_type, http_date, amz_headers, resource):
   key_header_strs = [ (name.lower(), "%s:%s" % (name.lower(), amz_headers[name])) for name in amz_headers.keys() ]
