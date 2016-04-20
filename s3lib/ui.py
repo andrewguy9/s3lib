@@ -165,10 +165,8 @@ def rm_main():
   args = rm_parser.parse_args()
   (access_id, secret_key) = load_creds(args.creds)
   with Connection(access_id, secret_key, args.host, args.port) as s3:
-    for obj in args.objects:
-      status, headers = s3.delete_object(args.bucket, obj)
-      if args.verbose:
-        print args.bucket, obj
+    results = s3._s3_delete_bulk_request(args.bucket, args.objects)
+    print results
 
 sign_parser = argparse.ArgumentParser("Sign an S3 form.")
 sign_parser.add_argument('--creds', type=str, dest='creds', action='store', default=None, help='Name of file to find aws access id and secret key')

@@ -7,6 +7,7 @@ import binascii
 import httplib
 import time
 from xml.etree.ElementTree import fromstring as parse
+from xml.etree.ElementTree import Element, SubElement, tostring
 
 class Connection:
 
@@ -122,6 +123,14 @@ class Connection:
     resp.read() #NOTE: Should be zero size response. Required to reset the connection
     return (resp.status, resp.getheaders())
 
+  def _s3_delete_bulk_request(self, bucket, keys):
+    content = _render_delete_bulk_content(keys)
+    resp = self._s3_request("POST", bucket, "/?delete", {}, {}, content)
+    if resp.status != httplib.OK:
+      raise ValueError("S3 request failed with %s" % (resp.status))
+    content = resp.read()
+    return content #TODO replace with parsed structure.
+
   def _s3_copy_request(self, src_bucket, src_key, dst_bucket, dst_key, headers):
     copy_headers = {'x-amz-copy-source':"/%s/%s" % (src_bucket, src_key)}
     copy_headers['x-amz-metadata-directive'] = 'REPLACE'
@@ -174,6 +183,8 @@ class Connection:
     headers["Date"] = http_now
     headers["Authorization"] = "AWS %s:%s" % (self.access_id, signature)
     headers["Connection"] = "keep-alive"
+    if content_md5 != '':
+      headers['Content-MD5'] = content_md5
 
     self.conn.request(method, resource, content, headers)
     resp = self.conn.getresponse()
@@ -225,6 +236,23 @@ def _get_string_to_sign(method, content_md5, content_type, http_date, amz_header
     header_str+="\n"
   string = "%s\n%s\n%s\n%s\n%s%s" % (method, content_md5, content_type, http_date, header_str, resource, )
   return string
+
+#################################
+# XML Render Handling Functions #
+#################################
+
+def _render_delete_bulk_content(keys):
+  delete = Element('Delete')
+  quiet = SubElement(delete, 'Quiet')
+  quiet.text = 'true'
+  objects = []
+  for name in keys:
+    obj = Element('Object')
+    key = SubElement(obj, 'Key')
+    key.text = name
+    objects.append(obj)
+  delete.extend(objects)
+  return tostring(delete)
 
 ####################################
 # Http Response Handling Functions #
