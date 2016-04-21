@@ -8,6 +8,7 @@ setup(
     author='Andrew Thomson',
     author_email='athomsonguy@gmail.com',
     packages=['s3lib', 's3lib.test'],
+    install_requires = ['safeoutput'],
     entry_points = {
       'console_scripts': [
         's3ls   = s3lib.ui:ls_main',
