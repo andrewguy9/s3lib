@@ -52,7 +52,7 @@ class Connection:
       keys, truncated = _parse_list_response(xml)
       for key in keys:
         yield key
-      start = key # Next request should start from last request's last item.
+        start = key # Next request should start from last request's last item.
       more = truncated
 
   def get_object(self, bucket, key):
