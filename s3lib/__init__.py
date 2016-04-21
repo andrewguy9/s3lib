@@ -199,6 +199,29 @@ class Connection:
   def _disconnect(self):
     self.conn.close()
 
+############################
+# Python Iteration Helpers #
+############################
+
+def _take(size, collection):
+  if size < 1:
+    raise ValueError("Size must be 1 or greater")
+  iterator = iter(collection)
+  """Yields up to size elements from iterator."""
+  for i in xrange(size):
+    yield iterator.next()
+
+def _batchify(size, collection):
+  if size < 1:
+    raise ValueError("Size must be 1 or greater")
+  iterator = iter(collection)
+  while True:
+    batch = list(_take(size, iterator))
+    if len(batch) == 0:
+      break
+    else:
+      yield batch
+
 ##########################
 # Signing Util Functions #
 ##########################
@@ -292,6 +315,10 @@ def test_all():
     test_sign_list()
     print "COPY TEST"
     # test_sign_copy() #TODO FAILING.
+    print "TAKE TEST"
+    test_take()
+    print "BATCHIFY TEST"
+    test_batchify()
   except Exception as e:
     print "Caught exception!"
     exit(1)
@@ -334,3 +361,19 @@ def test_sign_copy():
   expected_signature = "ENoSbxYByFA0UGLZUqJN5EUnLDg="
   validate_signature(string, expected_string, expected_signature)
 
+
+def test_take():
+  assert(list(_take(3, [])) == [])
+  assert(list(_take(3, [1,2])) == [1,2])
+  assert(list(_take(3, [1,2, 3, 4])) == [1,2,3])
+  i = iter(range(7))
+  assert(list(_take(3, i)) == [0,1,2])
+  assert(list(_take(3, i)) == [3,4,5])
+  assert(list(_take(3, i)) == [6])
+
+def test_batchify():
+  assert(list(_batchify(3, [])) == [])
+  assert(list(_batchify(3, [1])) == [[1]])
+  assert(list(_batchify(3, [1,2,3])) == [[1,2,3]])
+  assert(list(_batchify(3, [1,2,3,4])) == [[1,2,3],[4]])
+  assert(list(_batchify(3, iter([1,2,3,4]))) == [[1,2,3],[4]])
