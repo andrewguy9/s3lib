@@ -70,6 +70,14 @@ class Connection:
     status, headers = self._s3_delete_request(bucket, key)
     return (status, headers)
 
+  def delete_objects(self, bucket, keys, batch_size):
+    """ delete keys from bucket """
+    for batch in _batchify(batch_size, keys):
+      xml = self._s3_delete_bulk_request(bucket, batch)
+      results = _parse_delete_bulk_response(xml)
+      for (key, result) in results:
+        yield key, result
+
   def copy_object(self, src_bucket, src_key, dst_bucket, dst_key, headers):
     """ copy key from one bucket to another """
     (status, headers) = self._s3_copy_request(src_bucket, src_key, dst_bucket, dst_key, headers)
@@ -128,8 +136,8 @@ class Connection:
     resp = self._s3_request("POST", bucket, "/?delete", {}, {}, content)
     if resp.status != httplib.OK:
       raise ValueError("S3 request failed with %s" % (resp.status))
-    content = resp.read()
-    return content #TODO replace with parsed structure.
+    results = resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
+    return results
 
   def _s3_copy_request(self, src_bucket, src_key, dst_bucket, dst_key, headers):
     copy_headers = {'x-amz-copy-source':"/%s/%s" % (src_bucket, src_key)}
@@ -300,6 +308,17 @@ def _parse_get_service_response(xml):
   for bucket in buckets:
     names.append(bucket.text)
   return (names)
+
+KEY_PATH='{http://s3.amazonaws.com/doc/2006-03-01/}Key'
+def _tag_normalize(name):
+    if name[0] == "{":
+        _, tag = name[1:].split("}")
+        return tag
+    else:
+        return name
+def _parse_delete_bulk_response(xml):
+  actions = parse(xml)
+  return [ (action.find(KEY_PATH).text, _tag_normalize(action.tag)) for action in actions]
 
 ###########
 # Testing #

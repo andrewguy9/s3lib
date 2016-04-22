@@ -158,6 +158,7 @@ rm_parser.add_argument('--host', type=str, dest='host', action='store', default=
 rm_parser.add_argument('--port', type=int, dest='port', action='store', default=80, help='Port to connect to')
 rm_parser.add_argument('--creds', type=str, dest='creds', action='store', default=None, help='Name of file to find aws access id and secret key')
 rm_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', default=False, help='Be verbose when deleting files, showing them as they are removed.')
+rm_parser.add_argument('--batch', type=int, dest='batch', default=500, help='Batch size for s3 queries')
 rm_parser.add_argument('bucket', type=str, action='store', help='Name of bucket')
 rm_parser.add_argument('objects', type=str, action='store', nargs='+', help='List of urls to query')
 
@@ -165,8 +166,8 @@ def rm_main():
   args = rm_parser.parse_args()
   (access_id, secret_key) = load_creds(args.creds)
   with Connection(access_id, secret_key, args.host, args.port) as s3:
-    results = s3._s3_delete_bulk_request(args.bucket, args.objects)
-    print results
+    for (key, result) in s3.delete_objects(args.bucket, args.objects, args.batch):
+      print key, result
 
 sign_parser = argparse.ArgumentParser("Sign an S3 form.")
 sign_parser.add_argument('--creds', type=str, dest='creds', action='store', default=None, help='Name of file to find aws access id and secret key')
