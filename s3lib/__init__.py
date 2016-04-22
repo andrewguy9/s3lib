@@ -70,10 +70,10 @@ class Connection:
     status, headers = self._s3_delete_request(bucket, key)
     return (status, headers)
 
-  def delete_objects(self, bucket, keys, batch_size):
+  def delete_objects(self, bucket, keys, batch_size, quiet):
     """ delete keys from bucket """
     for batch in _batchify(batch_size, keys):
-      xml = self._s3_delete_bulk_request(bucket, batch)
+      xml = self._s3_delete_bulk_request(bucket, batch, quiet)
       results = _parse_delete_bulk_response(xml)
       for (key, result) in results:
         yield key, result
@@ -131,8 +131,8 @@ class Connection:
     resp.read() #NOTE: Should be zero size response. Required to reset the connection
     return (resp.status, resp.getheaders())
 
-  def _s3_delete_bulk_request(self, bucket, keys):
-    content = _render_delete_bulk_content(keys)
+  def _s3_delete_bulk_request(self, bucket, keys, quiet):
+    content = _render_delete_bulk_content(keys, quiet)
     resp = self._s3_request("POST", bucket, "/?delete", {}, {}, content)
     if resp.status != httplib.OK:
       raise ValueError("S3 request failed with %s" % (resp.status))
@@ -272,10 +272,11 @@ def _get_string_to_sign(method, content_md5, content_type, http_date, amz_header
 # XML Render Handling Functions #
 #################################
 
-def _render_delete_bulk_content(keys):
+def _render_delete_bulk_content(keys, quiet=False):
   delete = Element('Delete')
-  quiet = SubElement(delete, 'Quiet')
-  quiet.text = 'true'
+  if quiet:
+    quiet_element = SubElement(delete, 'Quiet')
+    quiet_element.text = 'true'
   objects = []
   for name in keys:
     obj = Element('Object')

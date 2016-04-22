@@ -166,7 +166,7 @@ def rm_main():
   args = rm_parser.parse_args()
   (access_id, secret_key) = load_creds(args.creds)
   with Connection(access_id, secret_key, args.host, args.port) as s3:
-    for (key, result) in s3.delete_objects(args.bucket, args.objects, args.batch):
+    for (key, result) in s3.delete_objects(args.bucket, args.objects, args.batch, not args.verbose):
       print key, result
 
 sign_parser = argparse.ArgumentParser("Sign an S3 form.")
