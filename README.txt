@@ -2,6 +2,28 @@
 S3Lib
 ===========
 
+Python library and collection of command line programs for interfacing with S3.
+Uses buffering and fixed memory usage, where possible, so that operations on large buckets and objects are safe and easy.
+
+===========
+Installation
+===========
+pip install s3lib
+
+===========
+Configuration
+===========
+Reads config file at ~/.s3
+
+Config file should look like:
+"""
+<AWS ACCESS TOKEN>
+<AWS SECRET KEY>
+"""
+
+===========
+Utilities
+===========
 s3ls
 usage: Program lists all the objects in an s3 bucket. Works on really big buckets
        [-h] [--host HOST] [--port PORT] [--output OUTPUT] [--creds CREDS]
