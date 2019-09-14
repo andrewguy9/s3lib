@@ -1,3 +1,4 @@
+from __future__ import print_function
 import argparse
 import base64
 from os.path import expanduser
@@ -56,11 +57,11 @@ def ls_main():
       if args.bucket:
         keys = s3.list_bucket(args.bucket, args.mark, args.prefix, args.batch)
         for key in keys:
-          print >> outfile, key
+          print(key, file=outfile)
       else:
         buckets = s3.list_buckets()
         for bucket in buckets:
-          print >> outfile, bucket
+          print(bucket, file=outfile)
 
 get_parser = argparse.ArgumentParser("Program lists all the objects in an s3 bucket. Works on really big buckets")
 get_parser.add_argument('--host', type=str, dest='host', help='Name of host')
@@ -104,7 +105,7 @@ def cp_main():
         raise ValueError("Header '%s' is not of form key:value" % header)
     s3.copy_object(args.src_bucket, args.src_object, args.dst_bucket, args.dst_object, headers)
     for (header, value) in headers:
-      print "%s: %s" % (header, value, )
+      print("%s: %s" % (header, value, ))
 
 head_parser = argparse.ArgumentParser("Program lists all the objects in an s3 bucket. Works on really big buckets")
 head_parser.add_argument('--host', type=str, dest='host', action='store', default='s3.amazonaws.com', help='Name of host')
@@ -121,10 +122,10 @@ def head_main():
     for obj in args.objects:
       headers = s3.head_object(args.bucket, obj)
       if args.json:
-        print json.dumps({"object":obj, "headers":dict(headers)})
+        print(json.dumps({"object":obj, "headers":dict(headers)}))
       else:
         for (header,value) in headers:
-          print "%s: %s" % (header, value)
+          print("%s: %s" % (header, value))
 
 put_parser = argparse.ArgumentParser("Program puts an object into s3")
 put_parser.add_argument('--host', type=str, dest='host', action='store', default='s3.amazonaws.com', help='Name of host')
@@ -148,10 +149,10 @@ def put_main():
   with Connection(access_id, secret_key, args.host, args.port) as s3:
     with open(args.file, "r") as f:
       (status, headers) = s3.put_object(args.bucket, args.object, f, headers)
-    print "HTTP Code: ", status
+    print("HTTP Code: ", status)
     for (header, value) in headers:
-      print "%s: %s" % (header, value)
-    print ""
+      print("%s: %s" % (header, value))
+    print("")
 
 rm_parser = argparse.ArgumentParser("Program deletes s3 keys.")
 rm_parser.add_argument('--host', type=str, dest='host', action='store', default='s3.amazonaws.com', help='Name of host')
@@ -167,7 +168,7 @@ def rm_main():
   (access_id, secret_key) = load_creds(args.creds)
   with Connection(access_id, secret_key, args.host, args.port) as s3:
     for (key, result) in s3.delete_objects(args.bucket, args.objects, args.batch, not args.verbose):
-      print key, result
+      print(key, result)
 
 sign_parser = argparse.ArgumentParser("Sign an S3 form.")
 sign_parser.add_argument('--creds', type=str, dest='creds', action='store', default=None, help='Name of file to find aws access id and secret key')
@@ -180,5 +181,5 @@ def sign_main():
     policy_document = f.read()
   policy = base64.b64encode(policy_document)
   signature = sign(secret_key, policy)
-  print policy
-  print signature
+  print(policy)
+  print(signature)

@@ -8,7 +8,7 @@ def take(size, collection):
   iterator = iter(collection)
   """Yields up to size elements from iterator."""
   for i in xrange(size):
-    yield iterator.next()
+    yield next(iterator)
 
 def batchify(size, collection):
   if size < 1:
