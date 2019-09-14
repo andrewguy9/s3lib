@@ -8,6 +8,7 @@ import httplib
 import time
 from xml.etree.ElementTree import fromstring as parse
 from xml.etree.ElementTree import Element, SubElement, tostring
+from s3lib.utils import split_headers, batchify, take, get_string_to_sign
 
 class Connection:
 
@@ -72,7 +73,7 @@ class Connection:
 
   def delete_objects(self, bucket, keys, batch_size, quiet):
     """ delete keys from bucket """
-    for batch in _batchify(batch_size, keys):
+    for batch in batchify(batch_size, keys):
       xml = self._s3_delete_bulk_request(bucket, batch, quiet)
       results = _parse_delete_bulk_response(xml)
       for (key, result) in results:
@@ -179,8 +180,8 @@ class Connection:
     except KeyError:
       content_type = ''
     content_md5 = sign_content_if_possible(content)
-    (amz_headers, reg_headers) = _split_headers(headers)
-    string_to_sign = _get_string_to_sign(method, content_md5, content_type, http_now, amz_headers, canonical_resource)
+    (amz_headers, reg_headers) = split_headers(headers)
+    string_to_sign = get_string_to_sign(method, content_md5, content_type, http_now, amz_headers, canonical_resource)
     signature = sign(self.secret, string_to_sign)
 
     if bucket:
@@ -207,44 +208,6 @@ class Connection:
   def _disconnect(self):
     self.conn.close()
 
-############################
-# Python Iteration Helpers #
-############################
-
-def _take(size, collection):
-  if size < 1:
-    raise ValueError("Size must be 1 or greater")
-  iterator = iter(collection)
-  """Yields up to size elements from iterator."""
-  for i in xrange(size):
-    yield iterator.next()
-
-def _batchify(size, collection):
-  if size < 1:
-    raise ValueError("Size must be 1 or greater")
-  iterator = iter(collection)
-  while True:
-    batch = list(_take(size, iterator))
-    if len(batch) == 0:
-      break
-    else:
-      yield batch
-
-##########################
-# Signing Util Functions #
-##########################
-
-def _split_headers(headers):
-  """Some headers are special to amazon. Splits those from regular http headers"""
-  amz_headers = {}
-  reg_headers = {}
-  for cur in headers:
-    if cur.lower().startswith('x-amz-'):
-      amz_headers[cur] = headers[cur]
-    else:
-      reg_headers[cur] = headers[cur]
-  return (amz_headers, reg_headers)
-
 def sign(secret, string_to_sign):
   hashed = hmac.new(secret, string_to_sign, sha1)
   return binascii.b2a_base64(hashed.digest()).strip()
@@ -258,15 +221,6 @@ def sign_content_if_possible(content):
 
 def sign_content(content):
   return binascii.b2a_base64(md5(content).digest()).strip()
-
-def _get_string_to_sign(method, content_md5, content_type, http_date, amz_headers, resource):
-  key_header_strs = [ (name.lower(), "%s:%s" % (name.lower(), amz_headers[name])) for name in amz_headers.keys() ]
-  header_list = map(lambda x: x[1], sorted(key_header_strs))
-  header_str = "\n".join(header_list)
-  if header_str:
-    header_str+="\n"
-  string = "%s\n%s\n%s\n%s\n%s%s" % (method, content_md5, content_type, http_date, header_str, resource, )
-  return string
 
 #################################
 # XML Render Handling Functions #
