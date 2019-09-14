@@ -5,10 +5,8 @@
 def take(size, collection):
   if size < 1:
     raise ValueError("Size must be 1 or greater")
-  iterator = iter(collection)
-  """Yields up to size elements from iterator."""
-  for i in range(size):
-    yield next(iterator)
+  for _, elem in zip(range(size), collection):
+    yield elem
 
 def batchify(size, collection):
   if size < 1:
