@@ -4,7 +4,7 @@ import hmac
 from hashlib import sha1
 from hashlib import md5
 import binascii
-import httplib
+import http.client
 import time
 from xml.etree.ElementTree import fromstring as parse
 from xml.etree.ElementTree import Element, SubElement, tostring
@@ -95,7 +95,7 @@ class Connection:
 
   def _s3_get_service_request(self):
     resp = self._s3_request("GET", None, None, {}, {}, '')
-    if resp.status != httplib.OK:
+    if resp.status != http.client.OK:
       raise ValueError("S3 request failed with: %s" % (resp.status))
     return resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
 
@@ -108,26 +108,26 @@ class Connection:
     if max_keys:
       args['max-keys'] = max_keys
     resp = self._s3_request("GET", bucket, "", args, {}, '')
-    if resp.status != httplib.OK:
+    if resp.status != http.client.OK:
       raise ValueError("S3 request failed with: %s" % (resp.status))
     return resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
 
   def _s3_get_request(self, bucket, key):
     resp = self._s3_request("GET", bucket, key, {}, {}, '')
-    if resp.status != httplib.OK:
+    if resp.status != http.client.OK:
       raise ValueError("S3 request failed with %s" % (resp.status))
     return resp
 
   def _s3_head_request(self, bucket, key):
     resp = self._s3_request("HEAD", bucket, key, {}, {}, '')
-    if resp.status != httplib.OK:
+    if resp.status != http.client.OK:
       raise ValueError("S3 request failed with %s" % (resp.status))
     resp.read() #NOTE: Should be zero size response. Required to reset the connection.
     return (resp.status, resp.getheaders())
 
   def _s3_delete_request(self, bucket, key):
     resp = self._s3_request("DELETE", bucket, key, {}, {}, '')
-    if resp.status != httplib.NO_CONTENT:
+    if resp.status != http.client.NO_CONTENT:
       raise ValueError("S3 request failed with %s" % (resp.status))
     resp.read() #NOTE: Should be zero size response. Required to reset the connection
     return (resp.status, resp.getheaders())
@@ -135,7 +135,7 @@ class Connection:
   def _s3_delete_bulk_request(self, bucket, keys, quiet):
     content = _render_delete_bulk_content(keys, quiet)
     resp = self._s3_request("POST", bucket, "/?delete", {}, {}, content)
-    if resp.status != httplib.OK:
+    if resp.status != http.client.OK:
       raise ValueError("S3 request failed with %s" % (resp.status))
     results = resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
     return results
@@ -143,16 +143,16 @@ class Connection:
   def _s3_copy_request(self, src_bucket, src_key, dst_bucket, dst_key, headers):
     copy_headers = {'x-amz-copy-source':"/%s/%s" % (src_bucket, src_key)}
     copy_headers['x-amz-metadata-directive'] = 'REPLACE'
-    headers = dict(headers.items() + copy_headers.items())
+    headers = dict(list(headers.items()) + list(copy_headers.items()))
     resp = self._s3_request("PUT", dst_bucket, dst_key, {}, headers, '')
-    if resp.status != httplib.OK:
+    if resp.status != http.client.OK:
       raise ValueError("S3 request failed with: %s" % (resp.status))
     return (resp.status, resp.getheaders())
 
   def _s3_put_request(self, bucket, key, data, headers):
     args = {}
     resp = self._s3_request("PUT", bucket, key, args, headers, data)
-    if resp.status != httplib.OK:
+    if resp.status != http.client.OK:
       raise ValueError("S3 request failed with: %s" % (resp.status))
     resp.read() #NOTE: Should be zero length response. Required to reset the connection.
     return (resp.status, resp.getheaders())
@@ -160,7 +160,7 @@ class Connection:
   def _s3_request(self, method, bucket, key, args, headers, content):
     http_now = time.strftime('%a, %d %b %G %H:%M:%S +0000', time.gmtime())
 
-    args = map( lambda x: "=".join(x), args.items())
+    args = ["=".join(x) for x in list(args.items())]
     args_str = "&".join(args)
     if args_str:
       args_str = "?" + args_str
@@ -203,7 +203,7 @@ class Connection:
 # S3 Connection Functions #
 ###########################
   def _connect(self):
-    self.conn = httplib.HTTPConnection(self.host, self.port, timeout=self.conn_timeout)
+    self.conn = http.client.HTTPConnection(self.host, self.port, timeout=self.conn_timeout)
 
   def _disconnect(self):
     self.conn.close()
@@ -214,7 +214,7 @@ def sign(secret, string_to_sign):
 
 def sign_content_if_possible(content):
   #TODO if the content is a proper file, it would also be possible.
-  if content != '' and isinstance(content, basestring):
+  if content != '' and isinstance(content, str):
     return sign_content(content)
   else:
     return ""

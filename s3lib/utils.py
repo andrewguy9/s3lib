@@ -7,7 +7,7 @@ def take(size, collection):
     raise ValueError("Size must be 1 or greater")
   iterator = iter(collection)
   """Yields up to size elements from iterator."""
-  for i in xrange(size):
+  for i in range(size):
     yield next(iterator)
 
 def batchify(size, collection):
@@ -37,8 +37,8 @@ def split_headers(headers):
   return (amz_headers, reg_headers)
 
 def get_string_to_sign(method, content_md5, content_type, http_date, amz_headers, resource):
-  key_header_strs = [ (name.lower(), "%s:%s" % (name.lower(), amz_headers[name])) for name in amz_headers.keys() ]
-  header_list = map(lambda x: x[1], sorted(key_header_strs))
+  key_header_strs = [ (name.lower(), "%s:%s" % (name.lower(), amz_headers[name])) for name in list(amz_headers.keys()) ]
+  header_list = [x[1] for x in sorted(key_header_strs)]
   header_str = "\n".join(header_list)
   if header_str:
     header_str+="\n"
