@@ -8,6 +8,7 @@ import httplib
 import time
 from xml.etree.ElementTree import fromstring as parse
 from xml.etree.ElementTree import Element, SubElement, tostring
+from s3lib.utils import split_headers, batchify, take, get_string_to_sign
 
 class Connection:
 
@@ -72,7 +73,7 @@ class Connection:
 
   def delete_objects(self, bucket, keys, batch_size, quiet):
     """ delete keys from bucket """
-    for batch in _batchify(batch_size, keys):
+    for batch in batchify(batch_size, keys):
       xml = self._s3_delete_bulk_request(bucket, batch, quiet)
       results = _parse_delete_bulk_response(xml)
       for (key, result) in results:
@@ -179,8 +180,8 @@ class Connection:
     except KeyError:
       content_type = ''
     content_md5 = sign_content_if_possible(content)
-    (amz_headers, reg_headers) = _split_headers(headers)
-    string_to_sign = _get_string_to_sign(method, content_md5, content_type, http_now, amz_headers, canonical_resource)
+    (amz_headers, reg_headers) = split_headers(headers)
+    string_to_sign = get_string_to_sign(method, content_md5, content_type, http_now, amz_headers, canonical_resource)
     signature = sign(self.secret, string_to_sign)
 
     if bucket:
@@ -207,44 +208,6 @@ class Connection:
   def _disconnect(self):
     self.conn.close()
 
-############################
-# Python Iteration Helpers #
-############################
-
-def _take(size, collection):
-  if size < 1:
-    raise ValueError("Size must be 1 or greater")
-  iterator = iter(collection)
-  """Yields up to size elements from iterator."""
-  for i in xrange(size):
-    yield iterator.next()
-
-def _batchify(size, collection):
-  if size < 1:
-    raise ValueError("Size must be 1 or greater")
-  iterator = iter(collection)
-  while True:
-    batch = list(_take(size, iterator))
-    if len(batch) == 0:
-      break
-    else:
-      yield batch
-
-##########################
-# Signing Util Functions #
-##########################
-
-def _split_headers(headers):
-  """Some headers are special to amazon. Splits those from regular http headers"""
-  amz_headers = {}
-  reg_headers = {}
-  for cur in headers:
-    if cur.lower().startswith('x-amz-'):
-      amz_headers[cur] = headers[cur]
-    else:
-      reg_headers[cur] = headers[cur]
-  return (amz_headers, reg_headers)
-
 def sign(secret, string_to_sign):
   hashed = hmac.new(secret, string_to_sign, sha1)
   return binascii.b2a_base64(hashed.digest()).strip()
@@ -258,15 +221,6 @@ def sign_content_if_possible(content):
 
 def sign_content(content):
   return binascii.b2a_base64(md5(content).digest()).strip()
-
-def _get_string_to_sign(method, content_md5, content_type, http_date, amz_headers, resource):
-  key_header_strs = [ (name.lower(), "%s:%s" % (name.lower(), amz_headers[name])) for name in amz_headers.keys() ]
-  header_list = map(lambda x: x[1], sorted(key_header_strs))
-  header_str = "\n".join(header_list)
-  if header_str:
-    header_str+="\n"
-  string = "%s\n%s\n%s\n%s\n%s%s" % (method, content_md5, content_type, http_date, header_str, resource, )
-  return string
 
 #################################
 # XML Render Handling Functions #
@@ -321,79 +275,3 @@ def _parse_delete_bulk_response(xml):
   actions = parse(xml)
   return [ (action.find(KEY_PATH).text, _tag_normalize(action.tag)) for action in actions]
 
-###########
-# Testing #
-###########
-
-def test_all():
-  try:
-    print "GET TEST"
-    test_sign_get()
-    print "PUT TEST"
-    test_sign_put()
-    print "LIST TEST"
-    test_sign_list()
-    print "COPY TEST"
-    # test_sign_copy() #TODO FAILING.
-    print "TAKE TEST"
-    test_take()
-    print "BATCHIFY TEST"
-    test_batchify()
-  except Exception as e:
-    print "Caught exception!"
-    exit(1)
-
-def validate_signature(string, expected_string, expected_signature):
-  print "output:"
-  print "***\n" + string + "\n***\n"
-  print "expected:"
-  print "---\n" + expected_string + "\n---\n"
-  assert(string == expected_string)
-  secret = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
-  signature = sign(secret, string)
-  print "Checking sigs"
-  print signature
-  print expected_signature
-  assert(signature == expected_signature)
-  print "done"
-
-def test_sign_get():
-  string = _get_string_to_sign("GET","", "", "Tue, 27 Mar 2007 19:36:42 +0000", {}, "/johnsmith/photos/puppy.jpg")
-  expected_string = "GET\n\n\nTue, 27 Mar 2007 19:36:42 +0000\n/johnsmith/photos/puppy.jpg"
-  expected_signature = "bWq2s1WEIj+Ydj0vQ697zp+IXMU="
-  validate_signature(string, expected_string, expected_signature)
-
-def test_sign_put():
-  string = _get_string_to_sign("PUT", "", "image/jpeg", "Tue, 27 Mar 2007 21:15:45 +0000", {}, "/johnsmith/photos/puppy.jpg" )
-  expected_string = "PUT\n\nimage/jpeg\nTue, 27 Mar 2007 21:15:45 +0000\n/johnsmith/photos/puppy.jpg"
-  expected_signature = "MyyxeRY7whkBe+bq8fHCL/2kKUg="
-  validate_signature(string, expected_string, expected_signature)
-
-def test_sign_list():
-  string = _get_string_to_sign("GET","", "", "Tue, 27 Mar 2007 19:42:41 +0000", {}, "/johnsmith/")
-  expected_string = "GET\n\n\nTue, 27 Mar 2007 19:42:41 +0000\n/johnsmith/"
-  expected_signature = "htDYFYduRNen8P9ZfE/s9SuKy0U="
-  validate_signature(string, expected_string, expected_signature)
-
-def test_sign_copy():
-  string = _get_string_to_sign("PUT", "", "", "Wed, 20 Feb 2008 22:12:21 +0000", {"x-amz-copy-source":"/pacific/flotsam"}, "/atlantic/jetsam")
-  expected_string = "PUT\n\n\nWed, 20 Feb 2008 22:12:21 +0000\nx-amz-copy-source:/pacific/flotsam\n/atlantic/jetsam"
-  expected_signature = "ENoSbxYByFA0UGLZUqJN5EUnLDg="
-  validate_signature(string, expected_string, expected_signature)
-
-
-def test_take():
-  assert(list(_take(3, [])) == [])
-  assert(list(_take(3, [1,2])) == [1,2])
-  assert(list(_take(3, [1,2, 3, 4])) == [1,2,3])
-  i = iter(range(7))
-  assert(list(_take(3, i)) == [0,1,2])
-  assert(list(_take(3, i)) == [3,4,5])
-  assert(list(_take(3, i)) == [6])
-
-def test_batchify():
-  assert(list(_batchify(3, [])) == [])
-  assert(list(_batchify(3, [1])) == [[1]])
-  assert(list(_batchify(3, [1,2,3])) == [[1,2,3]])
-  assert(list(_batchify(3, [1,2,3,4])) == [[1,2,3],[4]])
-  assert(list(_batchify(3, iter([1,2,3,4]))) == [[1,2,3],[4]])

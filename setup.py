@@ -1,6 +1,28 @@
 #!/usr/bin/env python
-
+import sys
 from setuptools import setup
+from setuptools.command.test import test as TestCommand
+
+requires =  ['safeoutput']
+test_requires = requires + ['pytest==4.6']
+
+class PyTest(TestCommand):
+    user_options = [('pytest-args=', 'a', "Arguments to pass to py.test")]
+
+    def initialize_options(self):
+        TestCommand.initialize_options(self)
+        self.pytest_args = []
+
+    def finalize_options(self):
+        TestCommand.finalize_options(self)
+        self.test_args = []
+        self.test_suite = True
+
+    def run_tests(self):
+        #import here, cause outside the eggs aren't loaded
+        import pytest
+        errno = pytest.main(self.pytest_args)
+        sys.exit(errno)
 
 setup(
     name='S3Lib',
@@ -8,7 +30,10 @@ setup(
     author='Andrew Thomson',
     author_email='athomsonguy@gmail.com',
     packages=['s3lib', 's3lib.test'],
-    install_requires = ['safeoutput'],
+    install_requires = requires,
+    tests_require = test_requires,
+    cmdclass = {'test': PyTest},
+    test_suite = 'pytest',
     entry_points = {
       'console_scripts': [
         's3ls   = s3lib.ui:ls_main',
