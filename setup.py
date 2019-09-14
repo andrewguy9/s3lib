@@ -2,13 +2,17 @@
 
 from setuptools import setup
 
+requires =  ['safeoutput']
+test_requires = requires + ['pytest']
+
 setup(
     name='S3Lib',
     version='0.4.1',
     author='Andrew Thomson',
     author_email='athomsonguy@gmail.com',
     packages=['s3lib', 's3lib.test'],
-    install_requires = ['safeoutput'],
+    install_requires = requires,
+    tests_require= test_requires,
     entry_points = {
       'console_scripts': [
         's3ls   = s3lib.ui:ls_main',
