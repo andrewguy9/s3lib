@@ -1,3 +1,8 @@
 build
 dist
-env/*
+env
+env3
+S3Lib.egg-info
+__pycache__
+.eggs
+*.pyc
