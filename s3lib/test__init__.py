@@ -3,7 +3,7 @@ import pytest
 
 def validate_signature(string, expected_string, expected_signature):
   assert(string == expected_string)
-  secret = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
+  secret = b'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
   signature = sign(secret, string)
   assert(signature == expected_signature)
 
