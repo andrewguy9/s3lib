@@ -16,6 +16,14 @@ class Connection:
   # Python special functions #
   ############################
   def __init__(self, access_id, secret, host=None, port=None, conn_timeout=None):
+    """
+    access_id is ?
+    secret is bytes
+    host is maybe str
+    port is maybe int
+    conn_timeout is maybe int seconds
+    """
+    assert isinstance(secret, bytes)
     self.access_id = access_id
     self.secret = secret
     if port is None:
