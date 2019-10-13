@@ -209,6 +209,11 @@ class Connection:
     self.conn.close()
 
 def sign(secret, string_to_sign):
+  """
+  secret is a str?
+  string_to_sign is a str.
+  return bytes signature.
+  """
   hashed = hmac.new(secret, string_to_sign, sha1)
   return binascii.b2a_base64(hashed.digest()).strip()
 
