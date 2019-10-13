@@ -198,7 +198,7 @@ class Connection:
       host = self.host
     headers["Host"] = host
     headers["Date"] = http_now
-    headers["Authorization"] = "AWS %s:%s" % (self.access_id, signature)
+    headers["Authorization"] = "AWS %s:%s" % (self.access_id, signature.decode('ascii'))
     headers["Connection"] = "keep-alive"
     if content_md5 != '':
       headers['Content-MD5'] = content_md5
