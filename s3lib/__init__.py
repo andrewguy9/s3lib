@@ -8,7 +8,7 @@ import http.client
 import time
 from xml.etree.ElementTree import fromstring as parse
 from xml.etree.ElementTree import Element, SubElement, tostring
-from s3lib.utils import split_headers, batchify, take, get_string_to_sign
+from s3lib.utils import split_headers, batchify, take, get_string_to_sign, raise_http_resp_error
 
 class Connection:
 
@@ -104,7 +104,7 @@ class Connection:
   def _s3_get_service_request(self):
     resp = self._s3_request("GET", None, None, {}, {}, '')
     if resp.status != http.client.OK:
-      raise ValueError("S3 request failed with: %s" % (resp.msg))
+      raise_http_resp_error(resp)
     return resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
 
   def _s3_list_request(self, bucket, marker=None, prefix=None, max_keys=None):
@@ -117,26 +117,26 @@ class Connection:
       args['max-keys'] = max_keys
     resp = self._s3_request("GET", bucket, "", args, {}, '')
     if resp.status != http.client.OK:
-      raise ValueError("S3 request failed with: %s" % (resp.msg))
+      raise_http_resp_error(resp)
     return resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
 
   def _s3_get_request(self, bucket, key):
     resp = self._s3_request("GET", bucket, key, {}, {}, '')
     if resp.status != http.client.OK:
-      raise ValueError("S3 request failed with %s" % (resp.msg))
+      raise_http_resp_error(resp)
     return resp
 
   def _s3_head_request(self, bucket, key):
     resp = self._s3_request("HEAD", bucket, key, {}, {}, '')
     if resp.status != http.client.OK:
-      raise ValueError("S3 request failed with %s" % (resp.msg))
+      raise_http_resp_error(resp)
     resp.read() #NOTE: Should be zero size response. Required to reset the connection.
     return (resp.status, resp.getheaders())
 
   def _s3_delete_request(self, bucket, key):
     resp = self._s3_request("DELETE", bucket, key, {}, {}, '')
     if resp.status != http.client.NO_CONTENT:
-      raise ValueError("S3 request failed with %s" % (resp.status))
+      raise_http_resp_error(resp)
     resp.read() #NOTE: Should be zero size response. Required to reset the connection
     return (resp.status, resp.getheaders())
 
@@ -144,7 +144,7 @@ class Connection:
     content = _render_delete_bulk_content(keys, quiet)
     resp = self._s3_request("POST", bucket, "/?delete", {}, {}, content)
     if resp.status != http.client.OK:
-      raise ValueError("S3 request failed with %s" % (resp.status))
+      raise_http_resp_error(resp)
     results = resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
     return results
 
@@ -154,14 +154,14 @@ class Connection:
     headers = dict(list(headers.items()) + list(copy_headers.items()))
     resp = self._s3_request("PUT", dst_bucket, dst_key, {}, headers, '')
     if resp.status != http.client.OK:
-      raise ValueError("S3 request failed with: %s" % (resp.status))
+      raise_http_resp_error(resp)
     return (resp.status, resp.getheaders())
 
   def _s3_put_request(self, bucket, key, data, headers):
     args = {}
     resp = self._s3_request("PUT", bucket, key, args, headers, data)
     if resp.status != http.client.OK:
-      raise ValueError("S3 request failed with: %s" % (resp.msg))
+      raise_http_resp_error(resp)
     resp.read() #NOTE: Should be zero length response. Required to reset the connection.
     return (resp.status, resp.getheaders())
 
