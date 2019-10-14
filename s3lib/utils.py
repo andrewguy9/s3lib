@@ -35,11 +35,20 @@ def split_headers(headers):
   return (amz_headers, reg_headers)
 
 def get_string_to_sign(method, content_md5, content_type, http_date, amz_headers, resource):
+  """
+  method is str.
+  content_md5 is ?
+  content_type is str
+  http_date is str
+  amz_headers is dict string string
+  resource is ?
+  returns utf-8 encoded bytes.
+  """
   key_header_strs = [ (name.lower(), "%s:%s" % (name.lower(), amz_headers[name])) for name in list(amz_headers.keys()) ]
   header_list = [x[1] for x in sorted(key_header_strs)]
   header_str = "\n".join(header_list)
   if header_str:
     header_str+="\n"
   string = "%s\n%s\n%s\n%s\n%s%s" % (method, content_md5, content_type, http_date, header_str, resource, )
-  return string
+  return string.encode('utf-8')
 

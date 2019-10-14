@@ -1,4 +1,4 @@
-
+from __future__ import print_function
 import argparse
 import base64
 from os.path import expanduser
@@ -10,18 +10,22 @@ from os import environ
 def load_creds_from_file(path):
   with open(path, "r") as f:
     access_id = f.readline().strip()
-    secret_key = f.readline().strip()
+    secret_key = f.readline().strip().encode('ascii')
     return (access_id, secret_key)
 
 def load_creds_from_vars():
   access_id = environ.get('AWS_ACCESS_KEY_ID')
   secret_key = environ.get('AWS_SECRET_ACCESS_KEY')
   if  access_id is not None and secret_key is not None:
-    return (access_id, secret_key)
+    return (access_id, secret_key.encode('ascii'))
   else:
     return None
 
 def load_creds(path):
+  """
+  path is str
+  returns (access_id, secret) with types (?, bytes)
+  """
   # Use the path if provided.
   if path is not None:
     return load_creds_from_file(path)

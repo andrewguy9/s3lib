@@ -16,6 +16,14 @@ class Connection:
   # Python special functions #
   ############################
   def __init__(self, access_id, secret, host=None, port=None, conn_timeout=None):
+    """
+    access_id is ?
+    secret is bytes
+    host is maybe str
+    port is maybe int
+    conn_timeout is maybe int seconds
+    """
+    assert isinstance(secret, bytes)
     self.access_id = access_id
     self.secret = secret
     if port is None:
@@ -96,7 +104,7 @@ class Connection:
   def _s3_get_service_request(self):
     resp = self._s3_request("GET", None, None, {}, {}, '')
     if resp.status != http.client.OK:
-      raise ValueError("S3 request failed with: %s" % (resp.status))
+      raise ValueError("S3 request failed with: %s" % (resp.msg))
     return resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
 
   def _s3_list_request(self, bucket, marker=None, prefix=None, max_keys=None):
@@ -109,19 +117,19 @@ class Connection:
       args['max-keys'] = max_keys
     resp = self._s3_request("GET", bucket, "", args, {}, '')
     if resp.status != http.client.OK:
-      raise ValueError("S3 request failed with: %s" % (resp.status))
+      raise ValueError("S3 request failed with: %s" % (resp.msg))
     return resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
 
   def _s3_get_request(self, bucket, key):
     resp = self._s3_request("GET", bucket, key, {}, {}, '')
     if resp.status != http.client.OK:
-      raise ValueError("S3 request failed with %s" % (resp.status))
+      raise ValueError("S3 request failed with %s" % (resp.msg))
     return resp
 
   def _s3_head_request(self, bucket, key):
     resp = self._s3_request("HEAD", bucket, key, {}, {}, '')
     if resp.status != http.client.OK:
-      raise ValueError("S3 request failed with %s" % (resp.status))
+      raise ValueError("S3 request failed with %s" % (resp.msg))
     resp.read() #NOTE: Should be zero size response. Required to reset the connection.
     return (resp.status, resp.getheaders())
 
@@ -153,7 +161,7 @@ class Connection:
     args = {}
     resp = self._s3_request("PUT", bucket, key, args, headers, data)
     if resp.status != http.client.OK:
-      raise ValueError("S3 request failed with: %s" % (resp.status))
+      raise ValueError("S3 request failed with: %s" % (resp.msg))
     resp.read() #NOTE: Should be zero length response. Required to reset the connection.
     return (resp.status, resp.getheaders())
 
@@ -190,7 +198,7 @@ class Connection:
       host = self.host
     headers["Host"] = host
     headers["Date"] = http_now
-    headers["Authorization"] = "AWS %s:%s" % (self.access_id, signature)
+    headers["Authorization"] = "AWS %s:%s" % (self.access_id, signature.decode('ascii'))
     headers["Connection"] = "keep-alive"
     if content_md5 != '':
       headers['Content-MD5'] = content_md5
@@ -209,6 +217,11 @@ class Connection:
     self.conn.close()
 
 def sign(secret, string_to_sign):
+  """
+  secret is a str?
+  string_to_sign is a str.
+  return bytes signature.
+  """
   hashed = hmac.new(secret, string_to_sign, sha1)
   return binascii.b2a_base64(hashed.digest()).strip()
 
