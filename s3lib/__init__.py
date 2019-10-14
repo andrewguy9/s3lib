@@ -31,7 +31,7 @@ class Connection:
     else:
       self.port = port
     if host is None:
-      self.host = "s3.amazonaws.com"
+      self.host = "s3.amazonaws.com" #TODO support multi-regions
     else:
       self.host = host
     self.conn_timeout = conn_timeout
@@ -53,6 +53,7 @@ class Connection:
     for bucket in buckets:
       yield bucket
 
+  #TODO MOVE
   def list_bucket(self, bucket, start, prefix, batch_size):
     """ list contents of individual bucket """
     more = True
@@ -64,21 +65,25 @@ class Connection:
         start = key # Next request should start from last request's last item.
       more = truncated
 
+  #TODO MOVE
   def get_object(self, bucket, key):
     """ pull down bucket object by key """
     #TODO Want to replace with some enter, exit struct.
     return self._s3_get_request(bucket, key)
 
+  #TODO MOVE
   def head_object(self, bucket, key):
     """ get request metadata for key in bucket """
     status, headers = self._s3_head_request(bucket, key)
     return headers
 
+  #TODO MOVE
   def delete_object(self, bucket, key):
     """ delete key from bucket """
     status, headers = self._s3_delete_request(bucket, key)
     return (status, headers)
 
+  #TODO MOVE
   def delete_objects(self, bucket, keys, batch_size, quiet):
     """ delete keys from bucket """
     for batch in batchify(batch_size, keys):
@@ -87,6 +92,7 @@ class Connection:
       for (key, result) in results:
         yield key, result
 
+  #TODO MOVE, need rewrite
   def copy_object(self, src_bucket, src_key, dst_bucket, dst_key, headers):
     """ copy key from one bucket to another """
     (status, headers) = self._s3_copy_request(src_bucket, src_key, dst_bucket, dst_key, headers)
@@ -107,6 +113,7 @@ class Connection:
       raise_http_resp_error(resp)
     return resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
 
+  #TODO move
   def _s3_list_request(self, bucket, marker=None, prefix=None, max_keys=None):
     args = {}
     if marker:
@@ -120,12 +127,14 @@ class Connection:
       raise_http_resp_error(resp)
     return resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
 
+  #TODO move
   def _s3_get_request(self, bucket, key):
     resp = self._s3_request("GET", bucket, key, {}, {}, '')
     if resp.status != http.client.OK:
       raise_http_resp_error(resp)
     return resp
 
+  #TODO move
   def _s3_head_request(self, bucket, key):
     resp = self._s3_request("HEAD", bucket, key, {}, {}, '')
     if resp.status != http.client.OK:
@@ -133,6 +142,7 @@ class Connection:
     resp.read() #NOTE: Should be zero size response. Required to reset the connection.
     return (resp.status, resp.getheaders())
 
+  #TODO move
   def _s3_delete_request(self, bucket, key):
     resp = self._s3_request("DELETE", bucket, key, {}, {}, '')
     if resp.status != http.client.NO_CONTENT:
@@ -140,6 +150,7 @@ class Connection:
     resp.read() #NOTE: Should be zero size response. Required to reset the connection
     return (resp.status, resp.getheaders())
 
+  #TODO move
   def _s3_delete_bulk_request(self, bucket, keys, quiet):
     content = _render_delete_bulk_content(keys, quiet)
     resp = self._s3_request("POST", bucket, "/?delete", {}, {}, content)
@@ -148,6 +159,7 @@ class Connection:
     results = resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
     return results
 
+  #TODO move
   def _s3_copy_request(self, src_bucket, src_key, dst_bucket, dst_key, headers):
     copy_headers = {'x-amz-copy-source':"/%s/%s" % (src_bucket, src_key)}
     copy_headers['x-amz-metadata-directive'] = 'REPLACE'
@@ -157,6 +169,7 @@ class Connection:
       raise_http_resp_error(resp)
     return (resp.status, resp.getheaders())
 
+  #TODO move
   def _s3_put_request(self, bucket, key, data, headers):
     args = {}
     resp = self._s3_request("PUT", bucket, key, args, headers, data)
@@ -165,6 +178,7 @@ class Connection:
     resp.read() #NOTE: Should be zero length response. Required to reset the connection.
     return (resp.status, resp.getheaders())
 
+  #TODO move
   def _s3_request(self, method, bucket, key, args, headers, content):
     http_now = time.strftime('%a, %d %b %G %H:%M:%S +0000', time.gmtime())
 
@@ -206,6 +220,7 @@ class Connection:
 ###########################
 # S3 Connection Functions #
 ###########################
+  #TODO refactor could fix issues.
   def _connect(self):
     self.conn = http.client.HTTPConnection(self.host, self.port, timeout=self.conn_timeout)
 
@@ -264,6 +279,7 @@ def _parse_list_response(xml):
     names.append(key.text)
   return (names, is_truncated)
 
+#TODO might change if we upgrade bucket list call.
 def _parse_get_service_response(xml):
   bucket_path = '{http://s3.amazonaws.com/doc/2006-03-01/}Buckets/{http://s3.amazonaws.com/doc/2006-03-01/}Bucket/{http://s3.amazonaws.com/doc/2006-03-01/}Name'
   tree = parse(xml)
