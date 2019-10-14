@@ -104,7 +104,7 @@ class Connection:
   def _s3_get_service_request(self):
     resp = self._s3_request("GET", None, None, {}, {}, '')
     if resp.status != http.client.OK:
-      raise ValueError("S3 request failed with: %s" % (resp.status))
+      raise ValueError("S3 request failed with: %s" % (resp.msg))
     return resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
 
   def _s3_list_request(self, bucket, marker=None, prefix=None, max_keys=None):
@@ -117,19 +117,19 @@ class Connection:
       args['max-keys'] = max_keys
     resp = self._s3_request("GET", bucket, "", args, {}, '')
     if resp.status != http.client.OK:
-      raise ValueError("S3 request failed with: %s" % (resp.status))
+      raise ValueError("S3 request failed with: %s" % (resp.msg))
     return resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
 
   def _s3_get_request(self, bucket, key):
     resp = self._s3_request("GET", bucket, key, {}, {}, '')
     if resp.status != http.client.OK:
-      raise ValueError("S3 request failed with %s" % (resp.status))
+      raise ValueError("S3 request failed with %s" % (resp.msg))
     return resp
 
   def _s3_head_request(self, bucket, key):
     resp = self._s3_request("HEAD", bucket, key, {}, {}, '')
     if resp.status != http.client.OK:
-      raise ValueError("S3 request failed with %s" % (resp.status))
+      raise ValueError("S3 request failed with %s" % (resp.msg))
     resp.read() #NOTE: Should be zero size response. Required to reset the connection.
     return (resp.status, resp.getheaders())
 
@@ -161,7 +161,7 @@ class Connection:
     args = {}
     resp = self._s3_request("PUT", bucket, key, args, headers, data)
     if resp.status != http.client.OK:
-      raise ValueError("S3 request failed with: %s" % (resp.status))
+      raise ValueError("S3 request failed with: %s" % (resp.msg))
     resp.read() #NOTE: Should be zero length response. Required to reset the connection.
     return (resp.status, resp.getheaders())
 
