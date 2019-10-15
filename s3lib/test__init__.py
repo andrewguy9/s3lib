@@ -1,3 +1,4 @@
+import s3lib
 from s3lib import *
 import pytest
 
@@ -31,3 +32,10 @@ def test_sign_copy():
   expected_string = "PUT\n\n\nWed, 20 Feb 2008 22:12:21 +0000\nx-amz-copy-source:/pacific/flotsam\n/atlantic/jetsam"
   expected_signature = "ENoSbxYByFA0UGLZUqJN5EUnLDg="
   validate_signature(string, expected_string, expected_signature)
+
+def test_s3_request_arg():
+  assert s3lib._calculate_query_arg_str({}) == ""
+  assert s3lib._calculate_query_arg_str({'k':None}) == "?k"
+  assert s3lib._calculate_query_arg_str({'k':'v'}) == "?k=v"
+  assert s3lib._calculate_query_arg_str({'k':'v', 'f':None}) == "?f&k=v"
+  assert s3lib._calculate_query_arg_str({'k1':'v1', 'k2':'v2'}) == "?k2=v2&k1=v1"
