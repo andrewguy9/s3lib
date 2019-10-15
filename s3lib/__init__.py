@@ -160,8 +160,9 @@ class Connection:
   def _s3_request(self, method, bucket, key, args, headers, content):
     http_now = time.strftime('%a, %d %b %G %H:%M:%S +0000', time.gmtime())
 
-    args = map( lambda x: "=".join(x), args.items())
-    args_str = "&".join(args)
+    value_args = ["%s=%s"%(arg, value) for (arg, value) in list(args.items()) if value is not None]
+    flag_args = ["%s"%arg for (arg, value) in list(args.items()) if value is None]
+    args_str = "&".join(flag_args+value_args)
     if args_str:
       args_str = "?" + args_str
     canonical_resource = "/"
