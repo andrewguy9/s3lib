@@ -168,10 +168,6 @@ class Connection:
   def _s3_request(self, method, bucket, key, args, headers, content):
     http_now = time.strftime('%a, %d %b %G %H:%M:%S +0000', time.gmtime())
 
-    args = ["=".join(x) for x in list(args.items())]
-    args_str = "&".join(args)
-    if args_str:
-      args_str = "?" + args_str
     canonical_resource = "/"
     if bucket:
       canonical_resource += bucket + "/"
@@ -181,7 +177,7 @@ class Connection:
     resource = "/"
     if key:
       resource += key
-    resource += args_str
+    resource += _calculate_query_arg_str(args)
 
     try:
       content_type = headers['Content-Type']
@@ -287,4 +283,17 @@ def _tag_normalize(name):
 def _parse_delete_bulk_response(xml):
   actions = parse(xml)
   return [ (action.find(KEY_PATH).text, _tag_normalize(action.tag)) for action in actions]
+
+def _calculate_query_arg_str(args):
+  """
+  args is dict of str-> Maybe str.
+  Produces a query arg string like "/?flag_name&argName=argValue..."
+  always returns a string. If no args are present produces the empty string.
+  """
+  value_args = ["%s=%s"%(arg, value) for (arg, value) in list(args.items()) if value is not None]
+  flag_args = ["%s"%arg for (arg, value) in list(args.items()) if value is None]
+  args_str = "&".join(flag_args+value_args)
+  if args_str:
+    args_str = "?" + args_str
+  return args_str
 
