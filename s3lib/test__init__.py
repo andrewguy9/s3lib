@@ -43,3 +43,4 @@ def test_s3_request_arg():
   assert re.findall("k2=v2", two_args) and re.findall("k1=v1", two_args)
   # Test url-encoding.
   assert s3lib._calculate_query_arg_str({"b@dkey": "b@dvalue$$"}) == "?b%40dkey=b%40dvalue%24%24"
+  assert s3lib._calculate_query_arg_str({"b@dkey": None}) == "?b%40dkey"
