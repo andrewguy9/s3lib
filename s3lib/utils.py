@@ -53,6 +53,6 @@ def get_string_to_sign(method, content_md5, content_type, http_date, amz_headers
   return string.encode('utf-8')
 
 def raise_http_resp_error(resp):
-    message = "S3 request failed with:\n%s %s\n%s" % (resp.status, resp.reason, resp.msg)
+    message = "S3 request failed with:\n%s %s\n%s\n%s" % (resp.status, resp.reason, resp.msg, resp.read())
     raise ValueError(message)
 
