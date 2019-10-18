@@ -9,6 +9,7 @@ import time
 from xml.etree.ElementTree import fromstring as parse
 from xml.etree.ElementTree import Element, SubElement, tostring
 from s3lib.utils import split_headers, batchify, take, get_string_to_sign, raise_http_resp_error
+import urllib
 
 class Connection:
 
@@ -191,6 +192,7 @@ class Connection:
     resource = "/"
     if key:
       resource += key
+    resource = urllib.parse.quote(resource)
     resource += _calculate_query_arg_str(args)
 
     try:
@@ -306,7 +308,7 @@ def _calculate_query_arg_str(args):
   Produces a query arg string like "/?flag_name&argName=argValue..."
   always returns a string. If no args are present produces the empty string.
   """
-  value_args = ["%s=%s"%(arg, value) for (arg, value) in list(args.items()) if value is not None]
+  value_args = ["%s=%s"%(urllib.parse.quote(arg), urllib.parse.quote(value)) for (arg, value) in list(args.items()) if value is not None]
   flag_args = ["%s"%arg for (arg, value) in list(args.items()) if value is None]
   args_str = "&".join(flag_args+value_args)
   if args_str:
