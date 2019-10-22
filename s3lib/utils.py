@@ -34,6 +34,11 @@ def split_headers(headers):
       reg_headers[cur] = headers[cur]
   return (amz_headers, reg_headers)
 
+subresources = ["versioning", "location", "acl", "torrent", "lifecycle", "versionid", "delete"]
+def split_args(args):
+  return {subresource:args[subresource]
+          for subresource in subresources if subresource in args}
+
 def get_string_to_sign(method, content_md5, content_type, http_date, amz_headers, resource):
   """
   method is str.

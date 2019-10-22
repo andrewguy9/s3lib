@@ -15,3 +15,7 @@ def test_batchify():
   assert(list(batchify(3, [1,2,3])) == [[1,2,3]])
   assert(list(batchify(3, [1,2,3,4])) == [[1,2,3],[4]])
   assert(list(batchify(3, iter([1,2,3,4]))) == [[1,2,3],[4]])
+
+def test_split_args():
+  assert split_args({"delete":None}) == {"delete": None}
+  assert split_args({"delete":None, 'a':'b'}) == {"delete": None}
