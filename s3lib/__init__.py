@@ -8,7 +8,7 @@ import http.client
 import time
 from xml.etree.ElementTree import fromstring as parse
 from xml.etree.ElementTree import Element, SubElement, tostring
-from s3lib.utils import split_headers, batchify, take, get_string_to_sign, raise_http_resp_error
+from s3lib.utils import split_headers, split_args, batchify, take, get_string_to_sign, raise_http_resp_error
 import urllib
 
 try:
@@ -148,7 +148,7 @@ class Connection:
 
   def _s3_delete_bulk_request(self, bucket, keys, quiet):
     content = _render_delete_bulk_content(keys, quiet)
-    resp = self._s3_request("POST", bucket, "/?delete", {}, {}, content)
+    resp = self._s3_request("POST", bucket, "", {"delete":None}, {}, content)
     if resp.status != http.client.OK:
       raise_http_resp_error(resp)
     results = resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
@@ -179,6 +179,7 @@ class Connection:
       canonical_resource += bucket + "/"
       if key:
         canonical_resource += key
+    canonical_resource += _calculate_query_arg_str(split_args(args))
 
     resource = "/"
     if key:
