@@ -115,7 +115,7 @@ class Connection:
       args['prefix'] = prefix
     if max_keys:
       args['max-keys'] = max_keys
-    resp = self._s3_request("GET", bucket, "", args, {}, '')
+    resp = self._s3_request("GET", bucket, None, args, {}, '')
     if resp.status != http.client.OK:
       raise_http_resp_error(resp)
     return resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
