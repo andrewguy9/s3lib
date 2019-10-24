@@ -67,7 +67,7 @@ def ls_main():
         for bucket in buckets:
           print(bucket, file=outfile)
 
-get_parser = argparse.ArgumentParser("Program lists all the objects in an s3 bucket. Works on really big buckets")
+get_parser = argparse.ArgumentParser("Program reads an object in an s3 bucket.")
 get_parser.add_argument('--host', type=str, dest='host', help='Name of host')
 get_parser.add_argument('--port', type=int, dest='port', help='Port to connect to')
 get_parser.add_argument('--output', type=str, dest='output', default=None, help='Name of output')
