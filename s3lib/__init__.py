@@ -32,14 +32,8 @@ class Connection:
     assert isinstance(secret, bytes)
     self.access_id = access_id
     self.secret = secret
-    if port is None:
-      self.port = 80
-    else:
-      self.port = port
-    if host is None:
-      self.host = "s3.amazonaws.com"
-    else:
-      self.host = host
+    self.port = port or 80
+    self.host = host or "s3.amazonaws.com"
     self.conn_timeout = conn_timeout
 
   def __enter__(self):
