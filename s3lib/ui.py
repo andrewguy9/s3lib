@@ -152,7 +152,7 @@ def put_main():
       raise ValueError("Header '%s' is not of form key:value" % header)
   with Connection(access_id, secret_key, args.host, args.port) as s3:
     with open(args.file, "r") as f:
-      (status, headers) = s3.put_object(args.bucket, args.object, f, headers)
+      (status, headers) = s3.put_object(args.bucket, args.object, f.read().encode('utf-8'), headers)
     print("HTTP Code: ", status)
     for (header, value) in headers:
       print("%s: %s" % (header, value))
