@@ -10,6 +10,7 @@ from xml.etree.ElementTree import fromstring as parse
 from xml.etree.ElementTree import Element, SubElement, tostring
 from s3lib.utils import split_headers, split_args, batchify, take, get_string_to_sign, raise_http_resp_error
 import urllib
+import sys
 
 try:
   quote = urllib.quote
@@ -201,7 +202,10 @@ class Connection:
     if content_md5 != '':
       headers['Content-MD5'] = content_md5
 
-    self.conn.request(method, resource, content, headers)
+    if sys.version_info >= (3, 0):
+      self.conn.request(method, resource, content, headers, encode_chunked=False)
+    else:
+      self.conn.request(method, resource, content, headers)
     resp = self.conn.getresponse()
     return resp
 
