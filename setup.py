@@ -26,7 +26,7 @@ class PyTest(TestCommand):
 
 setup(
     name='S3Lib',
-    version='0.4.1',
+    version='1.0.0',
     author='Andrew Thomson',
     author_email='athomsonguy@gmail.com',
     packages=['s3lib', 's3lib.test'],
@@ -42,7 +42,7 @@ setup(
         's3head = s3lib.ui:head_main',
         's3put  = s3lib.ui:put_main',
         's3rm   = s3lib.ui:rm_main',
-        's3sign   = s3lib.ui:sign_main',
+        's3sign = s3lib.ui:sign_main',
         ],
     },
     url='http://pypi.python.org/pypi/S3Lib/',
