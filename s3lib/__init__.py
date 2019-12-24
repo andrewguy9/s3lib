@@ -143,7 +143,7 @@ class Connection:
 
   def _s3_delete_bulk_request(self, bucket, keys, quiet):
     content = _render_delete_bulk_content(keys, quiet)
-    resp = self._s3_request("POST", bucket, "", {"delete":None}, {}, content)
+    resp = self._s3_request("POST", bucket, None, {"delete":None}, {}, content)
     if resp.status != http.client.OK:
       raise_http_resp_error(resp)
     results = resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
