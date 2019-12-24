@@ -202,6 +202,7 @@ class Connection:
     if content_md5 != '':
       headers['Content-MD5'] = content_md5
 
+    print(method, resource, content, headers)
     if sys.version_info >= (3, 0):
       self.conn.request(method, resource, content, headers, encode_chunked=False)
     else:
@@ -235,7 +236,7 @@ def sign_content_if_possible(content):
     return ""
 
 def sign_content(content):
-  return binascii.b2a_base64(md5(content).digest()).strip()
+  return binascii.b2a_base64(md5(content).digest()).strip().decode('ascii')
 
 #################################
 # XML Render Handling Functions #
