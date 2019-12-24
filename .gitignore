@@ -6,3 +6,6 @@ S3Lib.egg-info
 __pycache__
 .eggs
 *.pyc
+.tox/
+htmlcov/
+.coverage
