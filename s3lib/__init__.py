@@ -143,7 +143,7 @@ class Connection:
 
   def _s3_delete_bulk_request(self, bucket, keys, quiet):
     content = _render_delete_bulk_content(keys, quiet)
-    resp = self._s3_request("POST", bucket, "", {"delete":None}, {}, content)
+    resp = self._s3_request("POST", bucket, None, {"delete":None}, {}, content)
     if resp.status != http.client.OK:
       raise_http_resp_error(resp)
     results = resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
@@ -229,13 +229,13 @@ def sign(secret, string_to_sign):
 
 def sign_content_if_possible(content):
   #TODO if the content is a proper file, it would also be possible.
-  if content != '' and isinstance(content, str):
+  if content != '' and (isinstance(content, str) or isinstance(content, bytes)):
     return sign_content(content)
   else:
     return ""
 
 def sign_content(content):
-  return binascii.b2a_base64(md5(content).digest()).strip()
+  return binascii.b2a_base64(md5(content).digest()).strip().decode('ascii')
 
 #################################
 # XML Render Handling Functions #
