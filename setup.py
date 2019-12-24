@@ -3,7 +3,7 @@ import sys
 from setuptools import setup
 from setuptools.command.test import test as TestCommand
 
-requires =  ['safeoutput']
+requires =  ['safeoutput>=2.0']
 test_requires = requires + ['pytest==4.6']
 
 class PyTest(TestCommand):

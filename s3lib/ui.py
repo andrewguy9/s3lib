@@ -82,7 +82,7 @@ def get_main():
   args = get_parser.parse_args()
   (access_id, secret_key) = load_creds(args.creds)
   with Connection(access_id, secret_key, args.host, args.port) as s3:
-    with safeopen(args.output) as outfile:
+    with safeopen(args.output, 'wb') as outfile:
       data = s3.get_object(args.bucket, args.key)
       copy(data, outfile)
 
