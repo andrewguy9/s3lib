@@ -202,7 +202,6 @@ class Connection:
     if content_md5 != '':
       headers['Content-MD5'] = content_md5
 
-    print(method, resource, content, headers)
     if sys.version_info >= (3, 0):
       self.conn.request(method, resource, content, headers, encode_chunked=False)
     else:
