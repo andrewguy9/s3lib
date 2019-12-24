@@ -229,7 +229,7 @@ def sign(secret, string_to_sign):
 
 def sign_content_if_possible(content):
   #TODO if the content is a proper file, it would also be possible.
-  if content != '' and isinstance(content, str):
+  if content != '' and (isinstance(content, str) or isinstance(content, bytes)):
     return sign_content(content)
   else:
     return ""
