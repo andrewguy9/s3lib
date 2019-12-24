@@ -28,6 +28,7 @@ setup(
     url='http://pypi.python.org/pypi/S3Lib/',
     license='LICENSE.txt',
     description='Library and utilities for interfacing wtih S3',
+    long_description_content_type='text/markdown',
     long_description=open('README.md').read(),
     classifiers=[
         'Development Status :: 5 - Production/Stable',
