@@ -59,7 +59,7 @@ def ls_main():
   with Connection(access_id, secret_key, args.host, args.port) as s3:
     with safeopen(args.output) as outfile:
       if args.bucket:
-        keys = s3.list_bucket(args.bucket, args.mark, args.prefix, args.batch)
+        keys = s3.list_bucket(args.bucket, start=args.mark, prefix=args.prefix, batch=args.batch)
         for key in keys:
           print(key, file=outfile)
       else:

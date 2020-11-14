@@ -54,7 +54,7 @@ class Connection:
     for bucket in buckets:
       yield bucket
 
-  def list_bucket(self, bucket, start, prefix, batch_size):
+  def list_bucket(self, bucket, start=None, prefix=None, batch_size=None):
     """ list contents of individual bucket """
     more = True
     while more:
@@ -80,7 +80,7 @@ class Connection:
     status, headers = self._s3_delete_request(bucket, key)
     return (status, headers)
 
-  def delete_objects(self, bucket, keys, batch_size, quiet):
+  def delete_objects(self, bucket, keys, batch_size=1000, quiet=False):
     """ delete keys from bucket """
     for batch in batchify(batch_size, keys):
       xml = self._s3_delete_bulk_request(bucket, batch, quiet)
@@ -88,13 +88,17 @@ class Connection:
       for (key, result) in results:
         yield key, result
 
-  def copy_object(self, src_bucket, src_key, dst_bucket, dst_key, headers):
+  def copy_object(self, src_bucket, src_key, dst_bucket, dst_key, headers=None):
     """ copy key from one bucket to another """
+    if headers is None:
+        headers = dict()
     (status, headers) = self._s3_copy_request(src_bucket, src_key, dst_bucket, dst_key, headers)
     return (status, headers)
 
-  def put_object(self, bucket, key, data, headers):
+  def put_object(self, bucket, key, data, headers=None):
     """ push object from local to bucket """
+    if headers is None:
+        headers = None
     (status, headers) = self._s3_put_request(bucket, key, data, headers)
     return (status, headers)
 
@@ -159,6 +163,7 @@ class Connection:
     return (resp.status, resp.getheaders())
 
   def _s3_put_request(self, bucket, key, data, headers):
+    #TODO add abilityo to pass optional Content-MD5 value.
     args = {}
     resp = self._s3_request("PUT", bucket, key, args, headers, data)
     if resp.status != http.client.OK:
@@ -167,6 +172,7 @@ class Connection:
     return (resp.status, resp.getheaders())
 
   def _s3_request(self, method, bucket, key, args, headers, content):
+    #TODO add abilityo to pass optional Content-MD5 value.
     http_now = time.strftime('%a, %d %b %G %H:%M:%S +0000', time.gmtime())
 
     canonical_resource = "/"
@@ -241,7 +247,7 @@ def sign_content(content):
 # XML Render Handling Functions #
 #################################
 
-def _render_delete_bulk_content(keys, quiet=False):
+def _render_delete_bulk_content(keys, quiet):
   delete = Element('Delete')
   if quiet:
     quiet_element = SubElement(delete, 'Quiet')
