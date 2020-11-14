@@ -98,7 +98,7 @@ class Connection:
   def put_object(self, bucket, key, data, headers=None):
     """ push object from local to bucket """
     if headers is None:
-        headers = None
+        headers = dict()
     (status, headers) = self._s3_put_request(bucket, key, data, headers)
     return (status, headers)
 
