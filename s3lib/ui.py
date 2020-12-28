@@ -58,7 +58,7 @@ Options:
     --creds=<creds>     Name of file to find aws access id and secret key.
     --mark=<mark>       Starting point for enumeration.
     --prefix=<prefix>   Prefix to match on.
-    --batch=<batch>     Batch size for s3 queries.
+    --batch=<batch>     Batch size for s3 queries [default: 1000].
 """
 
 def ls_main():
