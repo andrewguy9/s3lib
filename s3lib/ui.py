@@ -75,23 +75,25 @@ def ls_main():
         for bucket in buckets:
           print(bucket, file=outfile)
 
-get_parser = argparse.ArgumentParser("Program reads an object in an s3 bucket.")
-get_parser.add_argument('--host', type=str, dest='host', help='Name of host')
-get_parser.add_argument('--port', type=int, dest='port', help='Port to connect to')
-get_parser.add_argument('--output', type=str, dest='output', default=None, help='Name of output')
-get_parser.add_argument('--creds', type=str, dest='creds', default=None, help='Name of file to find aws access id and secret key')
-get_parser.add_argument('--mark', type=str, dest='mark', help='Starting point for enumeration')
-get_parser.add_argument('--prefix', type=str, dest='prefix', help='Prefix to match on')
-get_parser.add_argument('--batch', type=str, dest='batch', help='Batch size for s3 queries')
-get_parser.add_argument('bucket', type=str, help='Name of bucket')
-get_parser.add_argument('key', type=str, help='Name of key')
+GET_USAGE = """
+s3get -- Program reads an object in an s3 bucket.
+
+Usage:
+    s3ls [options] <bucket> <key>
+
+Options:
+    --host=<host>       Name of host.
+    --port=<port>       Port to connect to.
+    --output=<output>   Name of output.
+    --creds=<creds>     Name of file to find aws access id and secret key.
+"""
 
 def get_main():
-  args = get_parser.parse_args()
-  (access_id, secret_key) = load_creds(args.creds)
-  with Connection(access_id, secret_key, args.host, args.port) as s3:
-    with safeopen(args.output, 'wb') as outfile:
-      data = s3.get_object(args.bucket, args.key)
+  args = docopt(GET_USAGE)
+  (access_id, secret_key) = load_creds(args.get('--creds'))
+  with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
+    with safeopen(args.get('--output'), 'wb') as outfile:
+      data = s3.get_object(args.get('<bucket>'), args.get('<key>'))
       copy(data, outfile)
 
 cp_parser = argparse.ArgumentParser("Program copies an object from one location to another")
