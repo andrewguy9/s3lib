@@ -150,32 +150,34 @@ def head_main():
         for (header,value) in headers:
           print("%s: %s" % (header, value))
 
-put_parser = argparse.ArgumentParser("Program puts an object into s3")
-put_parser.add_argument('--host', type=str, dest='host', action='store', default='s3.amazonaws.com', help='Name of host')
-put_parser.add_argument('--port', type=int, dest='port', action='store', default=80, help='Port to connect to')
-put_parser.add_argument('--creds', type=str, dest='creds', action='store', default=None, help='Name of file to find aws access id and secret key')
-put_parser.add_argument('--header', type=str, dest='headers', default=[], action='store', nargs='*')
-put_parser.add_argument('bucket', type=str)
-put_parser.add_argument('object', type=str)
-put_parser.add_argument('file', type=str)
+PUT_USAGE = """
+s3put -- Program puts an object into s3.
+
+Usage:
+    s3put [options] [--header=<header>]... <bucket> <object> <file>
+
+Options:
+    --host=<host>       Name of host.
+    --port=<port>       Port to connect to.
+    --creds=<creds>     Name of file to find aws access id and secret key.
+"""
 
 def put_main():
-  args = put_parser.parse_args()
-  (access_id, secret_key) = load_creds(args.creds)
+  args = docopt(PUT_USAGE)
+  (access_id, secret_key) = load_creds(args.get('--creds'))
   headers = {}
-  for header in args.headers:
+  for header in args.get('--header'):
     try:
       (key, value) = header.split(':', 1)
       headers[key] = value
     except ValueError:
       raise ValueError("Header '%s' is not of form key:value" % header)
-  with Connection(access_id, secret_key, args.host, args.port) as s3:
-    with open(args.file, "r") as f:
-      (status, headers) = s3.put_object(args.bucket, args.object, f.read().encode('utf-8'), headers)
+  with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
+    with open(args.get('<file>'), 'rb') as f:
+      (status, headers) = s3.put_object(args.get('<bucket>'), args.get('<object>'), f.read(), headers)
     print("HTTP Code: ", status)
     for (header, value) in headers:
       print("%s: %s" % (header, value))
-    print("")
 
 rm_parser = argparse.ArgumentParser("Program deletes s3 keys.")
 rm_parser.add_argument('--host', type=str, dest='host', action='store', default='s3.amazonaws.com', help='Name of host')
