@@ -61,8 +61,8 @@ Options:
     --batch=<batch>     Batch size for s3 queries [default: 1000].
 """
 
-def ls_main():
-  args = docopt(LS_USAGE)
+def ls_main(argv=None):
+  args = docopt(LS_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
   with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
     with safeopen(args.get('--output')) as outfile:
@@ -89,8 +89,8 @@ Options:
     --creds=<creds>     Name of file to find aws access id and secret key.
 """
 
-def get_main():
-  args = docopt(GET_USAGE)
+def get_main(argv=None):
+  args = docopt(GET_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
   with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
     with safeopen(args.get('--output'), 'wb') as outfile:
@@ -109,8 +109,8 @@ Options:
     --creds=<creds>     Name of file to find aws access id and secret key.
 """
 
-def cp_main():
-  args = docopt(CP_USAGE)
+def cp_main(argv=None):
+  args = docopt(CP_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
   with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
     headers = {}
@@ -138,8 +138,8 @@ Options:
     --json              Print in json format.
 """
 
-def head_main():
-  args = docopt(HEAD_USAGE)
+def head_main(argv=None):
+  args = docopt(HEAD_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
   with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
     for obj in args.get('<object>'):
@@ -162,8 +162,8 @@ Options:
     --creds=<creds>     Name of file to find aws access id and secret key.
 """
 
-def put_main():
-  args = docopt(PUT_USAGE)
+def put_main(argv=None):
+  args = docopt(PUT_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
   headers = {}
   for header in args.get('--header'):
@@ -193,8 +193,8 @@ Options:
     --batch=<batch>     Batch size for s3 queries [default: 500].
 """
 
-def rm_main():
-  args = docopt(RM_USAGE)
+def rm_main(argv=None):
+  args = docopt(RM_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
   with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
     for (key, result) in s3.delete_objects(args.get('<bucket>'), args.get('<object>'), int(args.get('--batch')), not args.get('--verbose')):
@@ -210,8 +210,8 @@ Options:
     --creds=<creds>     Name of file to find aws access id and secret key.
 """
 
-def sign_main():
-  args = docopt(SIGN_USAGE)
+def sign_main(argv=None):
+  args = docopt(SIGN_USAGE, argv)
   (_, secret_key) = load_creds(args.get('--creds'))
   with open(args.get('<file>'), 'rb') as f:
     policy_document = f.read()
