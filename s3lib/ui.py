@@ -6,6 +6,8 @@ from s3lib import Connection
 from s3lib import sign
 from safeoutput import open as safeopen
 from os import environ
+from docopt import docopt
+import json
 
 def load_creds_from_file(path):
   with open(path, "r") as f:
@@ -43,23 +45,30 @@ def copy(src, dst):
         dst.write(buf)
         buf = src.read(_BUFFSIZE)
 
-ls_parser = argparse.ArgumentParser("Program lists all the objects in an s3 bucket. Works on really big buckets")
-ls_parser.add_argument('--host', type=str, dest='host', help='Name of host')
-ls_parser.add_argument('--port', type=int, dest='port', help='Port to connect to')
-ls_parser.add_argument('--output', type=str, dest='output', default=None, help='Name of output')
-ls_parser.add_argument('--creds', type=str, dest='creds', default=None, help='Name of file to find aws access id and secret key')
-ls_parser.add_argument('--mark', type=str, dest='mark', help='Starting point for enumeration')
-ls_parser.add_argument('--prefix', type=str, dest='prefix', help='Prefix to match on')
-ls_parser.add_argument('--batch', type=str, dest='batch', help='Batch size for s3 queries')
-ls_parser.add_argument('bucket', type=str, nargs="?", default=None, help='Name of bucket')
+LS_USAGE = """
+s3ls -- Program lists all the objects in an s3 bucket. Works on really big buckets
+
+Usage:
+    s3ls [options] [<bucket>]
+
+Options:
+    --host=<host>       Name of host.
+    --port=<port>       Port to connect to.
+    --output=<output>   Name of output.
+    --creds=<creds>     Name of file to find aws access id and secret key.
+    --mark=<mark>       Starting point for enumeration.
+    --prefix=<prefix>   Prefix to match on.
+    --batch=<batch>     Batch size for s3 queries [default: 1000].
+"""
 
 def ls_main():
-  args = ls_parser.parse_args()
-  (access_id, secret_key) = load_creds(args.creds)
-  with Connection(access_id, secret_key, args.host, args.port) as s3:
-    with safeopen(args.output) as outfile:
-      if args.bucket:
-        keys = s3.list_bucket(args.bucket, start=args.mark, prefix=args.prefix, batch=args.batch)
+  args = docopt(LS_USAGE)
+  (access_id, secret_key) = load_creds(args.get('--creds'))
+  with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
+    with safeopen(args.get('--output')) as outfile:
+      bucket = args.get('<bucket>')
+      if bucket:
+        keys = s3.list_bucket(bucket, start=args.get('--mark'), prefix=args.get('--prefix'), batch_size=args.get('--batch'))
         for key in keys:
           print(key, file=outfile)
       else:
@@ -67,123 +76,146 @@ def ls_main():
         for bucket in buckets:
           print(bucket, file=outfile)
 
-get_parser = argparse.ArgumentParser("Program reads an object in an s3 bucket.")
-get_parser.add_argument('--host', type=str, dest='host', help='Name of host')
-get_parser.add_argument('--port', type=int, dest='port', help='Port to connect to')
-get_parser.add_argument('--output', type=str, dest='output', default=None, help='Name of output')
-get_parser.add_argument('--creds', type=str, dest='creds', default=None, help='Name of file to find aws access id and secret key')
-get_parser.add_argument('--mark', type=str, dest='mark', help='Starting point for enumeration')
-get_parser.add_argument('--prefix', type=str, dest='prefix', help='Prefix to match on')
-get_parser.add_argument('--batch', type=str, dest='batch', help='Batch size for s3 queries')
-get_parser.add_argument('bucket', type=str, help='Name of bucket')
-get_parser.add_argument('key', type=str, help='Name of key')
+GET_USAGE = """
+s3get -- Program reads an object in an s3 bucket.
+
+Usage:
+    s3ls [options] <bucket> <key>
+
+Options:
+    --host=<host>       Name of host.
+    --port=<port>       Port to connect to.
+    --output=<output>   Name of output.
+    --creds=<creds>     Name of file to find aws access id and secret key.
+"""
 
 def get_main():
-  args = get_parser.parse_args()
-  (access_id, secret_key) = load_creds(args.creds)
-  with Connection(access_id, secret_key, args.host, args.port) as s3:
-    with safeopen(args.output, 'wb') as outfile:
-      data = s3.get_object(args.bucket, args.key)
+  args = docopt(GET_USAGE)
+  (access_id, secret_key) = load_creds(args.get('--creds'))
+  with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
+    with safeopen(args.get('--output'), 'wb') as outfile:
+      data = s3.get_object(args.get('<bucket>'), args.get('<key>'))
       copy(data, outfile)
 
-cp_parser = argparse.ArgumentParser("Program copies an object from one location to another")
-cp_parser.add_argument('--host', type=str, dest='host', action='store', default='s3.amazonaws.com', help='Name of host')
-cp_parser.add_argument('--port', type=int, dest='port', action='store', default=80, help='Port to connect to')
-cp_parser.add_argument('--creds', type=str, dest='creds', action='store', default=None, help='Name of file to find aws access id and secret key')
-cp_parser.add_argument('--header', type=str, dest='headers', default=[], action='store', nargs='*')
-cp_parser.add_argument('src_bucket', type=str)
-cp_parser.add_argument('src_object', type=str)
-cp_parser.add_argument('dst_bucket', type=str)
-cp_parser.add_argument('dst_object', type=str)
+CP_USAGE="""
+s3cp -- Program copies an object from one location to another.
+
+Usage:
+    s3cp [options] <src_bucket> <src_object> <dst_bucket> <dst_object> [--header=<header>]...
+
+Options:
+    --host=<host>       Name of host.
+    --port=<port>       Port to connect to.
+    --creds=<creds>     Name of file to find aws access id and secret key.
+"""
 
 def cp_main():
-  args = cp_parser.parse_args()
-  (access_id, secret_key) = load_creds(args.creds)
-  with Connection(access_id, secret_key, args.host, args.port) as s3:
+  args = docopt(CP_USAGE)
+  (access_id, secret_key) = load_creds(args.get('--creds'))
+  with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
     headers = {}
-    for header in args.headers:
+    for header in args.get('--header'):
       try:
         (key, value) = header.split(':', 1)
         headers[key] = value
       except ValueError:
         raise ValueError("Header '%s' is not of form key:value" % header)
-    s3.copy_object(args.src_bucket, args.src_object, args.dst_bucket, args.dst_object, headers)
+    (status, headers) = s3.copy_object(args.get('<src_bucket>'), args.get('<src_object>'), args.get('<dst_bucket>'), args.get('<dst_object>'), headers)
+    print("HTTP Code: ", status)
     for (header, value) in headers:
       print("%s: %s" % (header, value, ))
 
-head_parser = argparse.ArgumentParser("Program lists all the objects in an s3 bucket. Works on really big buckets")
-head_parser.add_argument('--host', type=str, dest='host', action='store', default='s3.amazonaws.com', help='Name of host')
-head_parser.add_argument('--port', type=int, dest='port', action='store', default=80, help='Port to connect to')
-head_parser.add_argument('--json', action='store_true', help='Print in json format')
-head_parser.add_argument('--creds', type=str, dest='creds', action='store', default=None, help='Name of file to find aws access id and secret key')
-head_parser.add_argument('bucket', type=str, action='store', help='Name of bucket')
-head_parser.add_argument('objects', type=str, action='store', nargs='+', help='List of urls to query')
+HEAD_USAGE = """
+s3head -- Program gets metadata on s3 object.
+
+Usage:
+    s3head [options] <bucket> <object>...
+
+Options:
+    --host=<host>       Name of host.
+    --port=<port>       Port to connect to.
+    --creds=<creds>     Name of file to find aws access id and secret key.
+    --json              Print in json format.
+"""
 
 def head_main():
-  args = head_parser.parse_args()
-  (access_id, secret_key) = load_creds(args.creds)
-  with Connection(access_id, secret_key, args.host, args.port) as s3:
-    for obj in args.objects:
-      headers = s3.head_object(args.bucket, obj)
-      if args.json:
+  args = docopt(HEAD_USAGE)
+  (access_id, secret_key) = load_creds(args.get('--creds'))
+  with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
+    for obj in args.get('<object>'):
+      headers = s3.head_object(args.get('<bucket>'), obj)
+      if args.get('--json'):
         print(json.dumps({"object":obj, "headers":dict(headers)}))
       else:
         for (header,value) in headers:
           print("%s: %s" % (header, value))
 
-put_parser = argparse.ArgumentParser("Program puts an object into s3")
-put_parser.add_argument('--host', type=str, dest='host', action='store', default='s3.amazonaws.com', help='Name of host')
-put_parser.add_argument('--port', type=int, dest='port', action='store', default=80, help='Port to connect to')
-put_parser.add_argument('--creds', type=str, dest='creds', action='store', default=None, help='Name of file to find aws access id and secret key')
-put_parser.add_argument('--header', type=str, dest='headers', default=[], action='store', nargs='*')
-put_parser.add_argument('bucket', type=str)
-put_parser.add_argument('object', type=str)
-put_parser.add_argument('file', type=str)
+PUT_USAGE = """
+s3put -- Program puts an object into s3.
+
+Usage:
+    s3put [options] [--header=<header>]... <bucket> <object> <file>
+
+Options:
+    --host=<host>       Name of host.
+    --port=<port>       Port to connect to.
+    --creds=<creds>     Name of file to find aws access id and secret key.
+"""
 
 def put_main():
-  args = put_parser.parse_args()
-  (access_id, secret_key) = load_creds(args.creds)
+  args = docopt(PUT_USAGE)
+  (access_id, secret_key) = load_creds(args.get('--creds'))
   headers = {}
-  for header in args.headers:
+  for header in args.get('--header'):
     try:
       (key, value) = header.split(':', 1)
       headers[key] = value
     except ValueError:
       raise ValueError("Header '%s' is not of form key:value" % header)
-  with Connection(access_id, secret_key, args.host, args.port) as s3:
-    with open(args.file, "r") as f:
-      (status, headers) = s3.put_object(args.bucket, args.object, f.read().encode('utf-8'), headers)
+  with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
+    with open(args.get('<file>'), 'rb') as f:
+      (status, headers) = s3.put_object(args.get('<bucket>'), args.get('<object>'), f.read(), headers)
     print("HTTP Code: ", status)
     for (header, value) in headers:
       print("%s: %s" % (header, value))
-    print("")
 
-rm_parser = argparse.ArgumentParser("Program deletes s3 keys.")
-rm_parser.add_argument('--host', type=str, dest='host', action='store', default='s3.amazonaws.com', help='Name of host')
-rm_parser.add_argument('--port', type=int, dest='port', action='store', default=80, help='Port to connect to')
-rm_parser.add_argument('--creds', type=str, dest='creds', action='store', default=None, help='Name of file to find aws access id and secret key')
-rm_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', default=False, help='Be verbose when deleting files, showing them as they are removed.')
-rm_parser.add_argument('--batch', type=int, dest='batch', default=500, help='Batch size for s3 queries')
-rm_parser.add_argument('bucket', type=str, action='store', help='Name of bucket')
-rm_parser.add_argument('objects', type=str, action='store', nargs='+', help='List of urls to query')
+RM_USAGE = """
+s3rm -- Program deletes s3 keys.
+
+Usage:
+    s3rm [options] <bucket> <object>...
+
+Options:
+    --host=<host>       Name of host.
+    --port=<port>       Port to connect to.
+    --creds=<creds>     Name of file to find aws access id and secret key.
+    -v, --verbose       Be verbose when deleting files, showing them as they are removed.
+    --batch=<batch>     Batch size for s3 queries [default: 500].
+"""
 
 def rm_main():
-  args = rm_parser.parse_args()
-  (access_id, secret_key) = load_creds(args.creds)
-  with Connection(access_id, secret_key, args.host, args.port) as s3:
-    for (key, result) in s3.delete_objects(args.bucket, args.objects, args.batch, not args.verbose):
+  args = docopt(RM_USAGE)
+  (access_id, secret_key) = load_creds(args.get('--creds'))
+  with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
+    for (key, result) in s3.delete_objects(args.get('<bucket>'), args.get('<object>'), int(args.get('--batch')), not args.get('--verbose')):
       print(key, result)
 
-sign_parser = argparse.ArgumentParser("Sign an S3 form.")
-sign_parser.add_argument('--creds', type=str, dest='creds', action='store', default=None, help='Name of file to find aws access id and secret key')
-sign_parser.add_argument('file', type=str)
+SIGN_USAGE = """
+s3sign -- Sign an S3 form.
+
+Usage:
+    s3sign [options] <file>
+
+Options:
+    --creds=<creds>     Name of file to find aws access id and secret key.
+"""
 
 def sign_main():
-  args = sign_parser.parse_args()
-  (_, secret_key) = load_creds(args.creds)
-  with open(args.file, 'r') as f:
+  args = docopt(SIGN_USAGE)
+  (_, secret_key) = load_creds(args.get('--creds'))
+  with open(args.get('<file>'), 'rb') as f:
     policy_document = f.read()
   policy = base64.b64encode(policy_document)
   signature = sign(secret_key, policy)
-  print(policy)
-  print(signature)
+  print(policy.decode())
+  print(signature.decode())

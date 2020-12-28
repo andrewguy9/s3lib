@@ -3,12 +3,12 @@ import sys
 from setuptools import setup
 from setuptools.command.test import test as TestCommand
 
-requires =  ['safeoutput>=2.0', 'future']
+requires =  ['safeoutput>=2.0', 'future', 'docopt']
 test_requires = ['tox', 'pytest']
 
 setup(
     name='S3Lib',
-    version='1.1.1',
+    version='1.2.0',
     author='Andrew Thomson',
     author_email='athomsonguy@gmail.com',
     packages=['s3lib'],

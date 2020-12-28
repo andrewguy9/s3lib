@@ -119,7 +119,7 @@ class Connection:
     if prefix:
       args['prefix'] = prefix
     if max_keys:
-      args['max-keys'] = max_keys
+      args['max-keys'] = str(max_keys)
     resp = self._s3_request("GET", bucket, None, args, {}, '')
     if resp.status != http.client.OK:
       raise_http_resp_error(resp)
@@ -211,7 +211,7 @@ class Connection:
     if sys.version_info >= (3, 0):
       self.conn.request(method, resource, content, headers, encode_chunked=False)
     else:
-      self.conn.request(method, resource, content, headers)
+      self.conn.request(unicode(method), unicode(resource), content, headers)
     resp = self.conn.getresponse()
     return resp
 
