@@ -200,16 +200,22 @@ def rm_main():
     for (key, result) in s3.delete_objects(args.get('<bucket>'), args.get('<object>'), int(args.get('--batch')), not args.get('--verbose')):
       print(key, result)
 
-sign_parser = argparse.ArgumentParser("Sign an S3 form.")
-sign_parser.add_argument('--creds', type=str, dest='creds', action='store', default=None, help='Name of file to find aws access id and secret key')
-sign_parser.add_argument('file', type=str)
+SIGN_USAGE = """
+s3sign -- Sign an S3 form.
+
+Usage:
+    s3sign [options] <file>
+
+Options:
+    --creds=<creds>     Name of file to find aws access id and secret key.
+"""
 
 def sign_main():
-  args = sign_parser.parse_args()
-  (_, secret_key) = load_creds(args.creds)
-  with open(args.file, 'r') as f:
+  args = docopt(SIGN_USAGE)
+  (_, secret_key) = load_creds(args.get('--creds'))
+  with open(args.get('<file>'), 'rb') as f:
     policy_document = f.read()
   policy = base64.b64encode(policy_document)
   signature = sign(secret_key, policy)
-  print(policy)
-  print(signature)
+  print(policy.decode())
+  print(signature.decode())
