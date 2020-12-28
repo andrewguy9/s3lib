@@ -6,6 +6,7 @@ from s3lib import Connection
 from s3lib import sign
 from safeoutput import open as safeopen
 from os import environ
+from docopt import docopt
 
 def load_creds_from_file(path):
   with open(path, "r") as f:
@@ -43,23 +44,30 @@ def copy(src, dst):
         dst.write(buf)
         buf = src.read(_BUFFSIZE)
 
-ls_parser = argparse.ArgumentParser("Program lists all the objects in an s3 bucket. Works on really big buckets")
-ls_parser.add_argument('--host', type=str, dest='host', help='Name of host')
-ls_parser.add_argument('--port', type=int, dest='port', help='Port to connect to')
-ls_parser.add_argument('--output', type=str, dest='output', default=None, help='Name of output')
-ls_parser.add_argument('--creds', type=str, dest='creds', default=None, help='Name of file to find aws access id and secret key')
-ls_parser.add_argument('--mark', type=str, dest='mark', help='Starting point for enumeration')
-ls_parser.add_argument('--prefix', type=str, dest='prefix', help='Prefix to match on')
-ls_parser.add_argument('--batch', type=str, dest='batch', help='Batch size for s3 queries')
-ls_parser.add_argument('bucket', type=str, nargs="?", default=None, help='Name of bucket')
+LS_USAGE = """
+s3ls -- Program lists all the objects in an s3 bucket. Works on really big buckets
+
+Usage:
+    s3ls [options] [<bucket>]
+
+Options:
+    --host=<host>       Name of host.
+    --port=<port>       Port to connect to.
+    --output=<output>   Name of output.
+    --creds=<creds>     Name of file to find aws access id and secret key.
+    --mark=<mark>       Starting point for enumeration.
+    --prefix=<prefix>   Prefix to match on.
+    --batch=<batch>     Batch size for s3 queries.
+"""
 
 def ls_main():
-  args = ls_parser.parse_args()
-  (access_id, secret_key) = load_creds(args.creds)
-  with Connection(access_id, secret_key, args.host, args.port) as s3:
-    with safeopen(args.output) as outfile:
-      if args.bucket:
-        keys = s3.list_bucket(args.bucket, start=args.mark, prefix=args.prefix, batch=args.batch)
+  args = docopt(LS_USAGE)
+  (access_id, secret_key) = load_creds(args.get('--creds'))
+  with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
+    with safeopen(args.get('--output')) as outfile:
+      bucket = args.get('<bucket>')
+      if bucket:
+        keys = s3.list_bucket(bucket, start=args.get('--mark'), prefix=args.get('--prefix'), batch_size=args.get('--batch'))
         for key in keys:
           print(key, file=outfile)
       else:
