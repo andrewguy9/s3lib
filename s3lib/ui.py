@@ -121,7 +121,7 @@ def cp_main():
       except ValueError:
         raise ValueError("Header '%s' is not of form key:value" % header)
     (status, headers) = s3.copy_object(args.get('<src_bucket>'), args.get('<src_object>'), args.get('<dst_bucket>'), args.get('<dst_object>'), headers)
-    print(status)
+    print("HTTP Code: ", status)
     for (header, value) in headers:
       print("%s: %s" % (header, value, ))
 
