@@ -7,6 +7,7 @@ from s3lib import sign
 from safeoutput import open as safeopen
 from os import environ
 from docopt import docopt
+import json
 
 def load_creds_from_file(path):
   with open(path, "r") as f:
@@ -124,21 +125,26 @@ def cp_main():
     for (header, value) in headers:
       print("%s: %s" % (header, value, ))
 
-head_parser = argparse.ArgumentParser("Program lists all the objects in an s3 bucket. Works on really big buckets")
-head_parser.add_argument('--host', type=str, dest='host', action='store', default='s3.amazonaws.com', help='Name of host')
-head_parser.add_argument('--port', type=int, dest='port', action='store', default=80, help='Port to connect to')
-head_parser.add_argument('--json', action='store_true', help='Print in json format')
-head_parser.add_argument('--creds', type=str, dest='creds', action='store', default=None, help='Name of file to find aws access id and secret key')
-head_parser.add_argument('bucket', type=str, action='store', help='Name of bucket')
-head_parser.add_argument('objects', type=str, action='store', nargs='+', help='List of urls to query')
+HEAD_USAGE = """
+s3head -- Program gets metadata on s3 object.
+
+Usage:
+    s3head [options] <bucket> <object>...
+
+Options:
+    --host=<host>       Name of host.
+    --port=<port>       Port to connect to.
+    --creds=<creds>     Name of file to find aws access id and secret key.
+    --json              Print in json format.
+"""
 
 def head_main():
-  args = head_parser.parse_args()
-  (access_id, secret_key) = load_creds(args.creds)
-  with Connection(access_id, secret_key, args.host, args.port) as s3:
-    for obj in args.objects:
-      headers = s3.head_object(args.bucket, obj)
-      if args.json:
+  args = docopt(HEAD_USAGE)
+  (access_id, secret_key) = load_creds(args.get('--creds'))
+  with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
+    for obj in args.get('<object>'):
+      headers = s3.head_object(args.get('<bucket>'), obj)
+      if args.get('--json'):
         print(json.dumps({"object":obj, "headers":dict(headers)}))
       else:
         for (header,value) in headers:
