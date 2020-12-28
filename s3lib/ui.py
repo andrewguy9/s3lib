@@ -96,28 +96,31 @@ def get_main():
       data = s3.get_object(args.get('<bucket>'), args.get('<key>'))
       copy(data, outfile)
 
-cp_parser = argparse.ArgumentParser("Program copies an object from one location to another")
-cp_parser.add_argument('--host', type=str, dest='host', action='store', default='s3.amazonaws.com', help='Name of host')
-cp_parser.add_argument('--port', type=int, dest='port', action='store', default=80, help='Port to connect to')
-cp_parser.add_argument('--creds', type=str, dest='creds', action='store', default=None, help='Name of file to find aws access id and secret key')
-cp_parser.add_argument('--header', type=str, dest='headers', default=[], action='store', nargs='*')
-cp_parser.add_argument('src_bucket', type=str)
-cp_parser.add_argument('src_object', type=str)
-cp_parser.add_argument('dst_bucket', type=str)
-cp_parser.add_argument('dst_object', type=str)
+CP_USAGE="""
+s3cp -- Program copies an object from one location to another.
+
+Usage:
+    s3cp [options] <src_bucket> <src_object> <dst_bucket> <dst_object> [--header=<header>]...
+
+Options:
+    --host=<host>       Name of host.
+    --port=<port>       Port to connect to.
+    --creds=<creds>     Name of file to find aws access id and secret key.
+"""
 
 def cp_main():
-  args = cp_parser.parse_args()
-  (access_id, secret_key) = load_creds(args.creds)
-  with Connection(access_id, secret_key, args.host, args.port) as s3:
+  args = docopt(CP_USAGE)
+  (access_id, secret_key) = load_creds(args.get('--creds'))
+  with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
     headers = {}
-    for header in args.headers:
+    for header in args.get('--header'):
       try:
         (key, value) = header.split(':', 1)
         headers[key] = value
       except ValueError:
         raise ValueError("Header '%s' is not of form key:value" % header)
-    s3.copy_object(args.src_bucket, args.src_object, args.dst_bucket, args.dst_object, headers)
+    (status, headers) = s3.copy_object(args.get('<src_bucket>'), args.get('<src_object>'), args.get('<dst_bucket>'), args.get('<dst_object>'), headers)
+    print(status)
     for (header, value) in headers:
       print("%s: %s" % (header, value, ))
 
