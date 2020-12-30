@@ -211,7 +211,7 @@ class Connection:
     if sys.version_info >= (3, 0):
       self.conn.request(method, resource, content, headers, encode_chunked=False)
     else:
-      self.conn.request(unicode(method), unicode(resource), content, headers)
+      self.conn.request(bytes(method), bytes(resource), bytes(content), headers)
     resp = self.conn.getresponse()
     return resp
 
