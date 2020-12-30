@@ -8,7 +8,7 @@ test_requires = ['tox', 'pytest']
 
 setup(
     name='S3Lib',
-    version='1.2.0',
+    version='1.2.1',
     author='Andrew Thomson',
     author_email='athomsonguy@gmail.com',
     packages=['s3lib'],
