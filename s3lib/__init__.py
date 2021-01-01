@@ -11,6 +11,8 @@ from xml.etree.ElementTree import Element, SubElement, tostring
 from s3lib.utils import split_headers, split_args, batchify, take, get_string_to_sign, raise_http_resp_error
 import urllib
 import sys
+import stat
+import os
 
 try:
   quote = urllib.quote
@@ -168,6 +170,20 @@ class Connection:
   def _s3_put_request(self, bucket, key, data, headers):
     #TODO add abilityo to pass optional Content-MD5 value.
     args = {}
+    if isinstance(data, (str, bytes)):
+        content_length = len(data)
+    elif hasattr(data, 'fileno'):
+        fileno = data.fileno()
+        filestat = os.fstat(fileno)
+        if stat.S_ISREG(filestat.st_mode):
+            # Regular file
+            content_length = filestat[stat.ST_SIZE]
+        else:
+            # Special file, size won't be valid. Lets read the data to get value.
+            # We have to encode to utf-8 for later hashing.
+            data = data.read().encode('utf-8')
+            content_length = len(data)
+    headers['content-length'] = content_length
     resp = self._s3_request("PUT", bucket, key, args, headers, data)
     if resp.status != http.client.OK:
       raise_http_resp_error(resp)
@@ -214,7 +230,7 @@ class Connection:
     if sys.version_info >= (3, 0):
       self.conn.request(method, resource, content, headers, encode_chunked=False)
     else:
-      self.conn.request(bytes(method), bytes(resource), bytes(content), headers)
+      self.conn.request(method, resource, content, headers)
     resp = self.conn.getresponse()
     return resp
 
@@ -238,7 +254,7 @@ def sign(secret, string_to_sign):
 
 def sign_content_if_possible(content):
   #TODO if the content is a proper file, it would also be possible.
-  if content != '' and (isinstance(content, str) or isinstance(content, bytes)):
+  if content != '' and isinstance(content, (str, bytes)):
     return sign_content(content)
   else:
     return ""

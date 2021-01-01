@@ -8,6 +8,7 @@ from safeoutput import open as safeopen
 from os import environ
 from docopt import docopt
 import json
+import sys
 
 def load_creds_from_file(path):
   with open(path, "r") as f:
@@ -154,13 +155,19 @@ PUT_USAGE = """
 s3put -- Program puts an object into s3.
 
 Usage:
-    s3put [options] [--header=<header>]... <bucket> <object> <file>
+    s3put [options] [--header=<header>]... <bucket> <object> [<file>]
 
 Options:
     --host=<host>       Name of host.
     --port=<port>       Port to connect to.
     --creds=<creds>     Name of file to find aws access id and secret key.
 """
+
+def get_input_fd(path):
+    if path is None:
+        return sys.stdin
+    else:
+        return open(path, 'rb')
 
 def put_main(argv=None):
   args = docopt(PUT_USAGE, argv)
@@ -173,8 +180,8 @@ def put_main(argv=None):
     except ValueError:
       raise ValueError("Header '%s' is not of form key:value" % header)
   with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
-    with open(args.get('<file>'), 'rb') as f:
-      (status, headers) = s3.put_object(args.get('<bucket>'), args.get('<object>'), f.read(), headers)
+    with get_input_fd(args.get('<file>')) as f:
+      (status, headers) = s3.put_object(args.get('<bucket>'), args.get('<object>'), f, headers)
     print("HTTP Code: ", status)
     for (header, value) in headers:
       print("%s: %s" % (header, value))

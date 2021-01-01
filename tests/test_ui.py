@@ -59,11 +59,53 @@ def test_s3rm(capsys, testbucket, testkey):
     assert captured.out == ""
     assert captured.err == ""
 
-def test_s3put(tmp_path, capsys, testbucket, testkey, testkey2, testvalue):
+def test_s3put_file(tmp_path, capsys, testbucket, testkey, testkey2, testvalue):
     path = os.path.join(str(tmp_path), "test_file")
     with open(path, 'wb') as fd: fd.write(testvalue)
     captured = capsys.readouterr()
     s3lib.ui.put_main([testbucket, testkey, path])
+    captured = capsys.readouterr()
+    assert 'HTTP Code:  200' in captured.out
+    assert captured.err == ""
+    test_s3ls_list_bucket(capsys, testbucket, testkey)
+    test_s3get(capsys, testbucket, testkey, testvalue)
+    test_s3head(capsys, testbucket, testkey, testvalue)
+    test_s3cp(capsys, testbucket, testkey, testkey2)
+    test_s3rm(capsys, testbucket, testkey)
+
+def test_s3put_symlink(tmp_path, capsys, testbucket, testkey, testkey2, testvalue):
+    path = os.path.join(str(tmp_path), "test_file")
+    with open(path, 'wb') as fd: fd.write(testvalue)
+    link_path = os.path.join(str(tmp_path), "test_link")
+    os.symlink(path, link_path)
+    captured = capsys.readouterr()
+    s3lib.ui.put_main([testbucket, testkey, link_path])
+    captured = capsys.readouterr()
+    assert 'HTTP Code:  200' in captured.out
+    assert captured.err == ""
+    test_s3ls_list_bucket(capsys, testbucket, testkey)
+    test_s3get(capsys, testbucket, testkey, testvalue)
+    test_s3head(capsys, testbucket, testkey, testvalue)
+    test_s3cp(capsys, testbucket, testkey, testkey2)
+    test_s3rm(capsys, testbucket, testkey)
+
+def test_s3put_dir(tmp_path, capsys, testbucket, testkey, testkey2, testvalue):
+    path = os.path.join(str(tmp_path), "test_dir")
+    os.mkdir(path)
+    captured = capsys.readouterr()
+    with pytest.raises(IOError):
+        s3lib.ui.put_main([testbucket, testkey, path])
+    captured = capsys.readouterr()
+
+def test_s3put_pipe(tmp_path, capsys, testbucket, testkey, testkey2, testvalue, monkeypatch):
+    path = os.path.join(str(tmp_path), "test_file")
+    (r,w) = os.pipe()
+    with os.fdopen(w, 'wb') as w:
+        w.write(testvalue)
+        w.flush()
+    with os.fdopen(r, 'r') as r:
+        monkeypatch.setattr('sys.stdin', r)
+        s3lib.ui.put_main([testbucket, testkey])
     captured = capsys.readouterr()
     assert 'HTTP Code:  200' in captured.out
     assert captured.err == ""
