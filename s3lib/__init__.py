@@ -173,7 +173,7 @@ class Connection:
 
   def _s3_request(self, method, bucket, key, args, headers, content):
     #TODO add abilityo to pass optional Content-MD5 value.
-    http_now = time.strftime('%a, %d %b %G %H:%M:%S +0000', time.gmtime())
+    http_now = time.strftime('%a, %d %b %Y %H:%M:%S +0000', time.gmtime())
 
     canonical_resource = "/"
     if bucket:
