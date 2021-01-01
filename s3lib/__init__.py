@@ -92,15 +92,19 @@ class Connection:
     """ copy key from one bucket to another """
     if headers is None:
         headers = dict()
-    (status, headers) = self._s3_copy_request(src_bucket, src_key, dst_bucket, dst_key, headers)
-    return (status, headers)
+    else:
+        headers = dict(headers)
+    (status, resp_headers) = self._s3_copy_request(src_bucket, src_key, dst_bucket, dst_key, headers)
+    return (status, resp_headers)
 
   def put_object(self, bucket, key, data, headers=None):
     """ push object from local to bucket """
     if headers is None:
         headers = dict()
-    (status, headers) = self._s3_put_request(bucket, key, data, headers)
-    return (status, headers)
+    else:
+        headers = dict(headers)
+    (status, resp_headers) = self._s3_put_request(bucket, key, data, headers)
+    return (status, resp_headers)
 
 ##########################
 # Http request Functions #
@@ -154,9 +158,8 @@ class Connection:
     return results
 
   def _s3_copy_request(self, src_bucket, src_key, dst_bucket, dst_key, headers):
-    copy_headers = {'x-amz-copy-source':"/%s/%s" % (src_bucket, src_key)}
-    copy_headers['x-amz-metadata-directive'] = 'REPLACE'
-    headers = dict(list(headers.items()) + list(copy_headers.items()))
+    headers['x-amz-copy-source'] = "/%s/%s" % (src_bucket, src_key)
+    headers['x-amz-metadata-directive'] = 'REPLACE'
     resp = self._s3_request("PUT", dst_bucket, dst_key, {}, headers, '')
     if resp.status != http.client.OK:
       raise_http_resp_error(resp)
