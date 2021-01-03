@@ -228,6 +228,7 @@ class Connection:
       self.conn.request(method, resource, content, headers, encode_chunked=False)
     else:
       self.conn.request(method, resource, content, headers)
+    #TODO should we catch HTTPException?
     resp = self.conn.getresponse()
     return resp
 
