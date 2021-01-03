@@ -207,10 +207,7 @@ class Connection:
     resource = quote(resource)
     resource += _calculate_query_arg_str(args)
 
-    try:
-      content_type = headers['Content-Type']
-    except KeyError:
-      content_type = ''
+    content_type = headers.get('Content-Type', '')
     content_md5 = sign_content_if_possible(content)
     (amz_headers, reg_headers) = split_headers(headers)
     string_to_sign = get_string_to_sign(method, content_md5, content_type, http_now, amz_headers, canonical_resource)
