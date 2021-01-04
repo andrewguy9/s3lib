@@ -4,6 +4,8 @@ import base64
 from os.path import expanduser
 from s3lib import Connection
 from s3lib import sign
+from s3lib import LIST_BUCKET_KEY
+from s3lib import LIST_BUCKET_ATTRIBUTES
 from safeoutput import open as safeopen
 from os import environ
 from docopt import docopt
@@ -50,7 +52,7 @@ LS_USAGE = """
 s3ls -- Program lists all the objects in an s3 bucket. Works on really big buckets
 
 Usage:
-    s3ls [options] [<bucket>]
+    s3ls [options] [<bucket>] [--fields <field>...]
 
 Options:
     --host=<host>       Name of host.
@@ -60,7 +62,9 @@ Options:
     --mark=<mark>       Starting point for enumeration.
     --prefix=<prefix>   Prefix to match on.
     --batch=<batch>     Batch size for s3 queries [default: 1000].
-"""
+
+Fields: %s
+""" % ",".join(LIST_BUCKET_ATTRIBUTES)
 
 def ls_main(argv=None):
   args = docopt(LS_USAGE, argv)
@@ -69,9 +73,14 @@ def ls_main(argv=None):
     with safeopen(args.get('--output')) as outfile:
       bucket = args.get('<bucket>')
       if bucket:
-        keys = s3.list_bucket(bucket, start=args.get('--mark'), prefix=args.get('--prefix'), batch_size=args.get('--batch'))
-        for key in keys:
-          print(key, file=outfile)
+        objs = s3.list_bucket2(bucket, start=args.get('--mark'), prefix=args.get('--prefix'), batch_size=args.get('--batch'))
+        if args.get('--fields'):
+            fields = args.get('<field>')
+        else:
+            fields = [LIST_BUCKET_KEY]
+        for obj in objs:
+          selected = [obj.get(field) for field in fields]
+          print("\t".join(selected), file=outfile)
       else:
         buckets = s3.list_buckets()
         for bucket in buckets:

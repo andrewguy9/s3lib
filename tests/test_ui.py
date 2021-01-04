@@ -37,11 +37,27 @@ def test_s3ls_list_buckets(capsys, testbucket):
     assert captured.err == ""
 
 @pytest.mark.skip("Called indirectly")
-def test_s3ls_list_bucket(capsys, testbucket, testkey):
+def test_s3ls_list_bucket(capsys, testbucket, testkey=None, testetag=None, testsize=None):
     captured = capsys.readouterr()
-    s3lib.ui.ls_main([testbucket])
+    fields = []
+    if testkey:
+        fields.append('Key')
+    if testetag:
+        fields.append('ETag')
+    if testsize:
+        fields.append('Size')
+    if fields == ['Key']:
+        s3lib.ui.ls_main([testbucket])
+    else:
+        s3lib.ui.ls_main([testbucket, '--fields'] + fields)
     captured = capsys.readouterr()
-    assert testkey in captured.out
+    if testkey:
+        assert testkey in captured.out
+    if testetag:
+        assert testetag in captured.out
+    if testsize:
+        assert str(testsize) in captured.out
+
     assert captured.err == ""
 
 @pytest.mark.skip("Called indirectly")
@@ -62,12 +78,15 @@ def test_s3rm(capsys, testbucket, testkey):
 def test_s3put_file(tmp_path, capsys, testbucket, testkey, testkey2, testvalue):
     path = os.path.join(str(tmp_path), "test_file")
     with open(path, 'wb') as fd: fd.write(testvalue)
+    etag = md5(testvalue).hexdigest()
+    size = len(testvalue)
     captured = capsys.readouterr()
     s3lib.ui.put_main([testbucket, testkey, path])
     captured = capsys.readouterr()
     assert 'HTTP Code:  200' in captured.out
     assert captured.err == ""
-    test_s3ls_list_bucket(capsys, testbucket, testkey)
+    test_s3ls_list_bucket(capsys, testbucket)
+    test_s3ls_list_bucket(capsys, testbucket, testkey, etag, size)
     test_s3get(capsys, testbucket, testkey, testvalue)
     test_s3head(capsys, testbucket, testkey, testvalue)
     test_s3cp(capsys, testbucket, testkey, testkey2)

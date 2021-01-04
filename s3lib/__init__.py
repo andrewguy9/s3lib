@@ -56,16 +56,21 @@ class Connection:
     for bucket in buckets:
       yield bucket
 
-  def list_bucket(self, bucket, start=None, prefix=None, batch_size=None):
-    """ list contents of individual bucket """
+  def list_bucket2(self, bucket, start=None, prefix=None, batch_size=None):
+    """List contents of individual bucket returning dict of all attributes."""
     more = True
     while more:
       xml = self._s3_list_request(bucket, start, prefix, batch_size)
-      keys, truncated = _parse_list_response(xml)
-      for key in keys:
-        yield key
-        start = key # Next request should start from last request's last item.
+      objects, truncated = _parse_list_response(xml)
+      for object in objects:
+        yield object
+        start = object[LIST_BUCKET_KEY] # Next request should start from last request's last item.
       more = truncated
+
+  def list_bucket(self, bucket, start=None, prefix=None, batch_size=None):
+    """List contents of individual bucket."""
+    for obj in self.list_bucket2(bucket, start, prefix, batch_size):
+        yield obj[LIST_BUCKET_KEY]
 
   def get_object(self, bucket, key):
     """ pull down bucket object by key """
@@ -284,16 +289,18 @@ def _render_delete_bulk_content(keys, quiet):
 # Http Response Handling Functions #
 ####################################
 
+LIST_BUCKET_KEY = 'Key'
+LIST_BUCKET_ATTRIBUTES = ['Key', 'LastModified', 'ETag', 'Size', 'StorageClass']
 def _parse_list_response(xml):
-  is_truncated_path = '{http://s3.amazonaws.com/doc/2006-03-01/}IsTruncated'
-  key_path = '{http://s3.amazonaws.com/doc/2006-03-01/}Contents/{http://s3.amazonaws.com/doc/2006-03-01/}Key'
+  ns = {'ListBucketResult': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+  ns_str = '{http://s3.amazonaws.com/doc/2006-03-01/}'
+  is_truncated_path = 'ListBucketResult:IsTruncated'
+  contents_path = 'ListBucketResult:Contents'
   tree = parse(xml)
-  is_truncated = tree.find(is_truncated_path).text == 'true'
-  keys = tree.findall(key_path)
-  names = []
-  for key in keys:
-    names.append(key.text)
-  return (names, is_truncated)
+  is_truncated = tree.find(is_truncated_path, ns).text == 'true'
+  contents = tree.findall(contents_path, ns)
+  items = [{child.tag.replace(ns_str, ''):child.text for child in obj.getchildren()} for obj in contents]
+  return (items, is_truncated)
 
 def _parse_get_service_response(xml):
   bucket_path = '{http://s3.amazonaws.com/doc/2006-03-01/}Buckets/{http://s3.amazonaws.com/doc/2006-03-01/}Bucket/{http://s3.amazonaws.com/doc/2006-03-01/}Name'
