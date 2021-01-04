@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 
-import pdb
 import hmac
 from hashlib import sha1
 from hashlib import md5
@@ -58,20 +57,20 @@ class Connection:
       yield bucket
 
   def list_bucket2(self, bucket, start=None, prefix=None, batch_size=None):
-    """ list contents of individual bucket returning dict of all attributes."""
+    """List contents of individual bucket returning dict of all attributes."""
     more = True
     while more:
       xml = self._s3_list_request(bucket, start, prefix, batch_size)
       objects, truncated = _parse_list_response(xml)
       for object in objects:
         yield object
-        start = object['Key'] # Next request should start from last request's last item.
+        start = object[LIST_BUCKET_KEY] # Next request should start from last request's last item.
       more = truncated
 
   def list_bucket(self, bucket, start=None, prefix=None, batch_size=None):
-    """ list contents of individual bucket """
+    """List contents of individual bucket."""
     for obj in self.list_bucket2(bucket, start, prefix, batch_size):
-        yield obj['Key']
+        yield obj[LIST_BUCKET_KEY]
 
   def get_object(self, bucket, key):
     """ pull down bucket object by key """
@@ -290,6 +289,8 @@ def _render_delete_bulk_content(keys, quiet):
 # Http Response Handling Functions #
 ####################################
 
+LIST_BUCKET_KEY = 'Key'
+LIST_BUCKET_ATTRIBUTES = ['Key', 'LastModified', 'ETag', 'Size', 'StorageClass']
 def _parse_list_response(xml):
   ns = {'ListBucketResult': 'http://s3.amazonaws.com/doc/2006-03-01/'}
   ns_str = '{http://s3.amazonaws.com/doc/2006-03-01/}'

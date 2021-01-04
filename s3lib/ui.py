@@ -4,6 +4,8 @@ import base64
 from os.path import expanduser
 from s3lib import Connection
 from s3lib import sign
+from s3lib import LIST_BUCKET_KEY
+from s3lib import LIST_BUCKET_ATTRIBUTES
 from safeoutput import open as safeopen
 from os import environ
 from docopt import docopt
@@ -61,8 +63,8 @@ Options:
     --prefix=<prefix>   Prefix to match on.
     --batch=<batch>     Batch size for s3 queries [default: 1000].
 
-Fields: Key, LastModified, ETag, Size, StorageClass
-"""
+Fields: %s
+""" % ",".join(LIST_BUCKET_ATTRIBUTES)
 
 def ls_main(argv=None):
   args = docopt(LS_USAGE, argv)
@@ -75,7 +77,7 @@ def ls_main(argv=None):
         if args.get('--fields'):
             fields = args.get('<field>')
         else:
-            fields = ['Key']
+            fields = [LIST_BUCKET_KEY]
         for obj in objs:
           selected = [obj.get(field) for field in fields]
           print("\t".join(selected), file=outfile)
