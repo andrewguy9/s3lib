@@ -90,7 +90,7 @@ GET_USAGE = """
 s3get -- Program reads an object in an s3 bucket.
 
 Usage:
-    s3ls [options] <bucket> <key>
+    s3ls [options] <bucket> <key>...
 
 Options:
     --host=<host>       Name of host.
@@ -102,10 +102,12 @@ Options:
 def get_main(argv=None):
   args = docopt(GET_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
-  with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
-    with safeopen(args.get('--output'), 'wb') as outfile:
-      data = s3.get_object(args.get('<bucket>'), args.get('<key>'))
-      copy(data, outfile)
+  bucket = args.get('<bucket>')
+  s3 = Connection(access_id, secret_key, args.get('--host'), args.get('--port'))
+  with safeopen(args.get('--output'), 'wb') as outfile:
+    for key in args.get('<key>'):
+      with s3.get_object_conn(bucket, key) as data:
+        copy(data, outfile)
 
 CP_USAGE="""
 s3cp -- Program copies an object from one location to another.

@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 import hmac
 from hashlib import sha1
 from hashlib import md5
@@ -76,6 +74,13 @@ class Connection:
     """ pull down bucket object by key """
     #TODO Want to replace with some enter, exit struct.
     return self._s3_get_request(bucket, key)
+
+  def get_object_conn(self, bucket, key):
+    """ Fetch the object with a new connection to S3."""
+    new_conn = Connection(self.access_id, self.secret, self.host, self.port, self.conn_timeout)
+    new_conn._connect()
+    fd = new_conn.get_object(bucket, key)
+    return fd
 
   def head_object(self, bucket, key):
     """ get request metadata for key in bucket """
