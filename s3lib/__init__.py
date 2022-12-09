@@ -36,7 +36,6 @@ class Connection:
     self.port = port or 80
     self.host = host or "s3.amazonaws.com"
     self.conn_timeout = conn_timeout
-    self.conn = None
 
   def __enter__(self):
     self._connect()
