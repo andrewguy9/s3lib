@@ -67,6 +67,7 @@ def test_s3get(capsys, testbucket, testkey, testvalue):
     captured = capsys.readouterr()
     assert captured.out.encode('utf-8') == testvalue
     assert captured.err == ""
+# TODO test multiple KVs
 
 def test_s3rm(capsys, testbucket, testkey):
     captured = capsys.readouterr()

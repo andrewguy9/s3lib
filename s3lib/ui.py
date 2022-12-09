@@ -104,8 +104,8 @@ def get_main(argv=None):
   (access_id, secret_key) = load_creds(args.get('--creds'))
   bucket = args.get('<bucket>')
   with safeopen(args.get('--output'), 'wb') as outfile:
-    for key in args.get('<key>'):
-        with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
+    with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
+      for key in args.get('<key>'):
           data = s3.get_object(bucket, key)
           copy(data, outfile)
 
