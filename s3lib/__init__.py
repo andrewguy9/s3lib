@@ -302,7 +302,7 @@ def _parse_list_response(xml):
   tree = parse(xml)
   is_truncated = tree.find(is_truncated_path, ns).text == 'true'
   contents = tree.findall(contents_path, ns)
-  items = [{child.tag.replace(ns_str, ''):child.text for child in obj.getchildren()} for obj in contents]
+  items = [{child.tag.replace(ns_str, ''): child.text for child in iter(obj)} for obj in contents]
   return (items, is_truncated)
 
 def _parse_get_service_response(xml):
