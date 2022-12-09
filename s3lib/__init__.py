@@ -22,7 +22,7 @@ class Connection:
   ############################
   # Python special functions #
   ############################
-  def __init__(self, access_id, secret, host=None, port=None, conn_timeout=None, connect=False):
+  def __init__(self, access_id, secret, host=None, port=None, conn_timeout=None):
     """
     access_id is ?
     secret is bytes
@@ -37,8 +37,6 @@ class Connection:
     self.host = host or "s3.amazonaws.com"
     self.conn_timeout = conn_timeout
     self.conn = None
-    if connect:
-      self._connect()
 
   def __enter__(self):
     self._connect()
@@ -242,19 +240,10 @@ class Connection:
 # S3 Connection Functions #
 ###########################
   def _connect(self):
-    if self.conn is None:
-      self.conn = http.client.HTTPConnection(self.host, self.port, timeout=self.conn_timeout)
+    self.conn = http.client.HTTPConnection(self.host, self.port, timeout=self.conn_timeout)
 
   def _disconnect(self):
-    if self.conn:
-      self.conn.close()
-      self.conn = None
-
-def get_object_fd(access_id, secret, bucket, key, host=None, port=None, conn_timeout=None):
-  """ Fetch the object with a new connection to S3. Returns the raw handle for closing."""
-  new_conn = Connection(access_id, secret, host, port, conn_timeout, connect=True)
-  fd = new_conn.get_object(bucket, key)
-  return fd
+    self.conn.close()
 
 def sign(secret, string_to_sign):
   """

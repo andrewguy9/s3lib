@@ -6,7 +6,6 @@ from s3lib import Connection
 from s3lib import sign
 from s3lib import LIST_BUCKET_KEY
 from s3lib import LIST_BUCKET_ATTRIBUTES
-from s3lib import get_object_fd
 from safeoutput import open as safeopen
 from os import environ
 from docopt import docopt
@@ -106,14 +105,9 @@ def get_main(argv=None):
   bucket = args.get('<bucket>')
   with safeopen(args.get('--output'), 'wb') as outfile:
     for key in args.get('<key>'):
-      data = get_object_fd(access_id,
-                         secret_key,
-                         bucket,
-                         key,
-                         args.get('--host'),
-                         args.get('--port'))
-      copy(data, outfile)
-      data.close()
+        with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
+          data = s3.get_object(bucket, key)
+          copy(data, outfile)
 
 CP_USAGE="""
 s3cp -- Program copies an object from one location to another.
