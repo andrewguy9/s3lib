@@ -75,6 +75,10 @@ class Connection:
     #TODO Want to replace with some enter, exit struct.
     return self._s3_get_request(bucket, key)
 
+  def get_object_url(self, bucket, key, proto="https"):
+    """get a public url for the object in the bucket."""
+    return proto + "://" + self.host + "/" + bucket + "/" + key
+
   def head_object(self, bucket, key):
     """ get request metadata for key in bucket """
     status, headers = self._s3_head_request(bucket, key)

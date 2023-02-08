@@ -44,3 +44,16 @@ def test_s3_request_arg():
   # Test url-encoding.
   assert s3lib._calculate_query_arg_str({"b@dkey": "b@dvalue$$"}) == "?b%40dkey=b%40dvalue%24%24"
   assert s3lib._calculate_query_arg_str({"b@dkey": None}) == "?b%40dkey"
+
+
+def test_s3_get_object_url():
+    """
+    Example from https://aws.amazon.com/blogs/aws/amazon-s3-path-deprecation-plan-the-rest-of-the-story/
+    """
+    #TODO Upgrade to new style URLs.
+    expected = "https://s3.amazonaws.com/jbarr-public/images/ritchie_and_thompson_pdp11.jpeg"
+    bucket = "jbarr-public"
+    key = "images/ritchie_and_thompson_pdp11.jpeg"
+    conn = s3lib.Connection("someaccess", b"somesecret")
+    url = conn.get_object_url(bucket, key)
+    assert url == expected
