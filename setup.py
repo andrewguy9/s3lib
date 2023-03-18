@@ -8,7 +8,7 @@ test_requires = ['tox', 'pytest==7.2.2']
 
 setup(
     name='S3Lib',
-    version='1.6.1',
+    version='2.0.0',
     author='Andrew Thomson',
     author_email='athomsonguy@gmail.com',
     packages=['s3lib'],
@@ -35,6 +35,6 @@ setup(
         'License :: OSI Approved :: MIT License',
         'Topic :: Software Development :: Libraries',
         'Programming Language :: Python :: 3.7',
-        'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3.9',
     ],
 )
