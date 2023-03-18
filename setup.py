@@ -4,7 +4,7 @@ from setuptools import setup
 from setuptools.command.test import test as TestCommand
 
 requires =  ['safeoutput>=2.0', 'future', 'docopt']
-test_requires = ['tox', 'pytest']
+test_requires = ['tox', 'pytest==7.2.2']
 
 setup(
     name='S3Lib',

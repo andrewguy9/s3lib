@@ -7,15 +7,10 @@ import time
 from xml.etree.ElementTree import fromstring as parse
 from xml.etree.ElementTree import Element, SubElement, tostring
 from s3lib.utils import split_headers, split_args, batchify, take, get_string_to_sign, raise_http_resp_error
-import urllib
+from urllib.parse import quote
 import sys
 import stat
 import os
-
-try:
-  quote = urllib.quote
-except AttributeError:
-  quote = urllib.parse.quote
 
 class Connection:
 
