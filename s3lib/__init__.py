@@ -6,7 +6,7 @@ import http.client
 import time
 from xml.etree.ElementTree import fromstring as parse
 from xml.etree.ElementTree import Element, SubElement, tostring
-from s3lib.utils import split_headers, split_args, batchify, take, get_string_to_sign, raise_http_resp_error
+from s3lib.utils import split_headers, split_args, batchify, take, get_string_to_sign, raise_http_resp_error, rate_limited
 from urllib.parse import quote
 import sys
 import stat
@@ -192,6 +192,7 @@ class Connection:
     resp.read() #NOTE: Should be zero length response. Required to reset the connection.
     return (resp.status, resp.getheaders())
 
+  @rate_limited(max_per_second=2)
   def _s3_request(self, method, bucket, key, args, headers, content):
     #TODO add abilityo to pass optional Content-MD5 value.
     http_now = time.strftime('%a, %d %b %Y %H:%M:%S +0000', time.gmtime())
