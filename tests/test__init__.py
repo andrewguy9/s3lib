@@ -2,6 +2,7 @@ import s3lib
 from s3lib import *
 import pytest
 import re
+import os
 
 def validate_signature(string, expected_string, expected_signature):
   assert(string == expected_string)
