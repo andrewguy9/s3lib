@@ -199,6 +199,51 @@ class Connection:
   def _s3_request(self, method, bucket, key, args, headers, content):
     """
     Make an S3 request using AWS Signature Version 4.
+
+    Automatically handles region discovery from 307 redirects.
+    """
+    # Initialize bucket region cache if not present
+    if not hasattr(self, '_bucket_regions'):
+      self._bucket_regions = {}
+
+    # Use cached region for this bucket if available
+    if bucket and bucket in self._bucket_regions:
+      self.region = self._bucket_regions[bucket]
+
+    # Try the request, handling redirects for region discovery
+    max_redirects = 2
+    for attempt in range(max_redirects):
+      resp = self._s3_request_inner(method, bucket, key, args, headers.copy(), content)
+
+      # Check for redirect responses (301 or 307)
+      if resp.status in (301, 307):
+        # Read the response body to reset the connection
+        resp.read()
+
+        # Extract the correct region from response headers
+        resp_headers = dict(resp.getheaders())
+        discovered_region = resp_headers.get('x-amz-bucket-region')
+
+        if discovered_region and bucket:
+          # Cache the discovered region for this bucket
+          self._bucket_regions[bucket] = discovered_region
+          self.region = discovered_region
+          # Clear the current endpoint so we reconnect with the new region
+          if hasattr(self, '_current_endpoint'):
+            delattr(self, '_current_endpoint')
+          # Retry the request with the correct region
+          continue
+
+      # Not a redirect, return the response
+      return resp
+
+    # If we exhausted retries, return the last response
+    return resp
+
+  def _s3_request_inner(self, method, bucket, key, args, headers, content):
+    """
+    Inner request method that performs a single S3 request.
+    Called by _s3_request which handles redirect retries.
     """
     # Build the URI path and host for the request
     # Use regional endpoints for non us-east-1 to avoid redirects

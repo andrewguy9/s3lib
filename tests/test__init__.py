@@ -58,3 +58,37 @@ def test_s3_get_object_url():
     conn = s3lib.Connection("someaccess", b"somesecret")
     url = conn.get_object_url(bucket, key)
     assert url == expected
+
+def test_automatic_region_discovery():
+    """
+    Test that regions are automatically discovered from redirects.
+    Tests both us-east-1 (default) and us-west-1 (requires discovery).
+    """
+    # Note: This test requires valid AWS credentials in environment or ~/.s3
+    # It tests against real S3 buckets
+    try:
+        from s3lib.ui import load_creds
+        (access_id, secret_key) = load_creds(None)
+    except:
+        pytest.skip("No AWS credentials available")
+
+    # Create connection without specifying region (defaults to us-east-1)
+    with s3lib.Connection(access_id, secret_key) as conn:
+        # Test us-east-1 bucket (should work with default region)
+        buckets_east = list(conn.list_bucket('s3libtestbucket', batch_size=1))
+        assert len(buckets_east) > 0
+        # Verify region is still us-east-1
+        assert conn.region == 'us-east-1'
+
+        # Test us-west-1 bucket (should auto-discover region from redirect)
+        buckets_west = list(conn.list_bucket('s3libtestbucket2', batch_size=1))
+        assert len(buckets_west) > 0
+        # Verify region was discovered and updated
+        assert conn.region == 'us-west-1'
+        # Verify region was cached for this bucket
+        assert conn._bucket_regions['s3libtestbucket2'] == 'us-west-1'
+
+        # Test that subsequent requests to the same bucket use cached region
+        buckets_west_2 = list(conn.list_bucket('s3libtestbucket2', batch_size=1))
+        assert len(buckets_west_2) > 0
+        assert conn.region == 'us-west-1'
