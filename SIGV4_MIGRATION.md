@@ -98,6 +98,31 @@ def __init__(self, access_id, secret, host=None, port=None, conn_timeout=None, r
 - Same API surface
 - Same command-line interface
 
+## Automatic Region Discovery (Added 2024-12-19)
+
+### How It Works
+The library now automatically discovers bucket regions from 307 redirect responses:
+
+1. When accessing a bucket in a different region than configured, AWS returns a 307 redirect with the `x-amz-bucket-region` header
+2. S3Lib extracts the correct region from the response headers
+3. The region is cached for that bucket to avoid future redirects
+4. The request is automatically retried with the correct region
+
+### Benefits
+- **No region configuration needed** - Just access any bucket, s3lib figures out the region
+- **Works across all regions** - Seamlessly handles buckets in us-east-1, us-west-1, eu-west-1, etc.
+- **Performance** - Regions are cached, so only the first request per bucket incurs the redirect
+- **User-friendly** - Matches boto3 behavior
+
+### Example
+```bash
+# Works without setting AWS_DEFAULT_REGION
+s3ls s3libtestbucket2  # Bucket in us-west-1
+s3ls s3libtestbucket   # Bucket in us-east-1
+```
+
+The library defaults to us-east-1, but will automatically discover and cache the correct region for any bucket.
+
 ## Known Limitations
 
 ### 1. `s3sign` command not updated
@@ -121,6 +146,14 @@ The old `sign()` function is kept for the `s3sign` command.
 
 **Impact**: None - doesn't interfere with SigV4 operations
 **Future**: Can be removed when `s3sign` is updated to SigV4
+
+### 4. Intermittent ConnectionResetError (Pre-existing)
+Rarely, tests may encounter `ConnectionResetError` during HTTP connection reuse. This is a long-standing issue dating back to 2022 connection management changes (commits 2a8e09a, 48b2cbc, etc.).
+
+**Impact**: Minimal - occurs intermittently, typically during test runs
+**Root cause**: Related to HTTP/1.1 keep-alive connection reuse and state management
+**Workaround**: Re-run tests; production use is not significantly affected
+**Future**: Could add connection retry logic or improve connection state management
 
 ## Version Recommendation
 
