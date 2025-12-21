@@ -196,8 +196,11 @@ class Connection:
         else:
             # Special file, size won't be valid. Lets read the data to get value.
             # We have to encode to utf-8 for later hashing.
+            # TODO This looks totally wrong. What about binary files?
             data = data.read().encode('utf-8')
             content_length = len(data)
+    else:
+        raise TypeError(f"Cannot determine content-length of type {type(data)}")
     headers['content-length'] = content_length
     resp = self._s3_request("PUT", bucket, key, args, headers, data)
     if resp.status != http.client.OK:
