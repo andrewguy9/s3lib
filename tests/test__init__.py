@@ -57,3 +57,48 @@ def test_s3_get_object_url():
     conn = s3lib.Connection("someaccess", b"somesecret")
     url = conn.get_object_url(bucket, key)
     assert url == expected
+
+def test_connection_lifecycle_error():
+    """
+    Test that ConnectionLifecycleError is raised when trying to make
+    a second request before consuming the first response.
+    """
+    import unittest.mock as mock
+    from http.client import HTTPResponse
+
+    # Create a connection and mock the underlying HTTP connection
+    conn = s3lib.Connection("someaccess", b"somesecret")
+    conn._connect()
+
+    # Create a mock response that is not consumed (isclosed() returns False)
+    mock_resp1 = mock.Mock(spec=HTTPResponse)
+    mock_resp1.isclosed.return_value = False
+    mock_resp1.status = 200
+
+    # Manually set outstanding response to simulate get_object() call
+    conn._outstanding_response = mock_resp1
+
+    # Try to make another request - should raise ConnectionLifecycleError
+    with pytest.raises(s3lib.ConnectionLifecycleError) as exc_info:
+        conn._validate_connection_ready()
+
+    assert "not fully consumed" in str(exc_info.value)
+
+    # Now test that if response is consumed, no error is raised
+    mock_resp1.isclosed.return_value = True
+    conn._validate_connection_ready()  # Should not raise
+    assert conn._outstanding_response is None  # Should be cleared
+
+def test_connection_initialized():
+    """Test that connection attributes are properly initialized."""
+    conn = s3lib.Connection("someaccess", b"somesecret")
+    assert conn.conn is None
+    assert conn._outstanding_response is None
+
+def test_disconnect_safety():
+    """Test that disconnect is safe to call even if never connected."""
+    conn = s3lib.Connection("someaccess", b"somesecret")
+    # Should not raise even though conn is None
+    conn._disconnect()
+    assert conn.conn is None
+    assert conn._outstanding_response is None

@@ -12,6 +12,10 @@ import sys
 import stat
 import os
 
+class ConnectionLifecycleError(Exception):
+  """Raised when attempting to reuse a connection with an unconsumed response."""
+  pass
+
 class Connection:
 
   ############################
@@ -31,6 +35,8 @@ class Connection:
     self.port = port or 80
     self.host = host or "s3.amazonaws.com"
     self.conn_timeout = conn_timeout
+    self.conn = None
+    self._outstanding_response = None
 
   def __enter__(self):
     self._connect()
@@ -118,7 +124,9 @@ class Connection:
     resp = self._s3_request("GET", None, None, {}, {}, '')
     if resp.status != http.client.OK:
       raise_http_resp_error(resp)
-    return resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
+    data = resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
+    self._outstanding_response = None  # Response consumed
+    return data
 
   def _s3_list_request(self, bucket, marker=None, prefix=None, max_keys=None):
     args = {}
@@ -131,7 +139,9 @@ class Connection:
     resp = self._s3_request("GET", bucket, None, args, {}, '')
     if resp.status != http.client.OK:
       raise_http_resp_error(resp)
-    return resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
+    data = resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
+    self._outstanding_response = None  # Response consumed
+    return data
 
   def _s3_get_request(self, bucket, key):
     resp = self._s3_request("GET", bucket, key, {}, {}, '')
@@ -144,6 +154,7 @@ class Connection:
     if resp.status != http.client.OK:
       raise_http_resp_error(resp)
     resp.read() #NOTE: Should be zero size response. Required to reset the connection.
+    self._outstanding_response = None  # Response consumed
     return (resp.status, resp.getheaders())
 
   def _s3_delete_request(self, bucket, key):
@@ -151,6 +162,7 @@ class Connection:
     if resp.status != http.client.NO_CONTENT:
       raise_http_resp_error(resp)
     resp.read() #NOTE: Should be zero size response. Required to reset the connection
+    self._outstanding_response = None  # Response consumed
     return (resp.status, resp.getheaders())
 
   def _s3_delete_bulk_request(self, bucket, keys, quiet):
@@ -159,6 +171,7 @@ class Connection:
     if resp.status != http.client.OK:
       raise_http_resp_error(resp)
     results = resp.read() #TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
+    self._outstanding_response = None  # Response consumed
     return results
 
   def _s3_copy_request(self, src_bucket, src_key, dst_bucket, dst_key, headers):
@@ -190,10 +203,15 @@ class Connection:
     if resp.status != http.client.OK:
       raise_http_resp_error(resp)
     resp.read() #NOTE: Should be zero length response. Required to reset the connection.
+    self._outstanding_response = None  # Response consumed
     return (resp.status, resp.getheaders())
 
   def _s3_request(self, method, bucket, key, args, headers, content):
     #TODO add abilityo to pass optional Content-MD5 value.
+
+    # Validate that previous response was consumed before making a new request
+    self._validate_connection_ready()
+
     http_now = time.strftime('%a, %d %b %Y %H:%M:%S +0000', time.gmtime())
 
     canonical_resource = "/"
@@ -232,16 +250,42 @@ class Connection:
       self.conn.request(method, resource, content, headers)
     #TODO should we catch HTTPException?
     resp = self.conn.getresponse()
+
+    # Track this response so we can validate it's consumed before the next request
+    self._outstanding_response = resp
+
     return resp
 
 ###########################
 # S3 Connection Functions #
 ###########################
+  def _is_response_consumed(self, resp):
+    """Check if an HTTPResponse has been fully consumed."""
+    return resp.isclosed()
+
+  def _validate_connection_ready(self):
+    """
+    Ensure connection is in a valid state for a new request.
+    Raises ConnectionLifecycleError if a previous response hasn't been consumed.
+    """
+    if self._outstanding_response is not None:
+      if not self._is_response_consumed(self._outstanding_response):
+        raise ConnectionLifecycleError(
+          "Previous response not fully consumed. "
+          "You must read the entire response body before making another request. "
+          "Call response.read() to consume the data."
+        )
+      self._outstanding_response = None
+
   def _connect(self):
-    self.conn = http.client.HTTPConnection(self.host, self.port, timeout=self.conn_timeout)
+    if self.conn is None:
+      self.conn = http.client.HTTPConnection(self.host, self.port, timeout=self.conn_timeout)
 
   def _disconnect(self):
-    self.conn.close()
+    if self.conn is not None:
+      self.conn.close()
+      self.conn = None
+    self._outstanding_response = None
 
 def sign(secret, string_to_sign):
   """
