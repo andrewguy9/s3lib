@@ -244,12 +244,17 @@ class Connection:
     if content_md5 != '':
       headers['Content-MD5'] = content_md5
 
-    if sys.version_info >= (3, 0):
-      self.conn.request(method, resource, content, headers, encode_chunked=False)
-    else:
-      self.conn.request(method, resource, content, headers)
-    #TODO should we catch HTTPException?
-    resp = self.conn.getresponse()
+    try:
+      if sys.version_info >= (3, 0):
+        self.conn.request(method, resource, content, headers, encode_chunked=False)
+      else:
+        self.conn.request(method, resource, content, headers)
+      resp = self.conn.getresponse()
+    except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError,
+            OSError, http.client.HTTPException) as e:
+      # Connection is broken, clean it up so next call will reconnect
+      self._disconnect()
+      raise  # Re-raise for caller to handle/retry
 
     # Track this response so we can validate it's consumed before the next request
     self._outstanding_response = resp
@@ -283,7 +288,14 @@ class Connection:
 
   def _disconnect(self):
     if self.conn is not None:
-      self.conn.close()
+      try:
+        self.conn.close()
+      except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
+        # Connection already broken by remote, nothing to close
+        pass
+      except AttributeError:
+        # conn object is in an invalid state (shouldn't happen, but be defensive)
+        pass
       self.conn = None
     self._outstanding_response = None
 

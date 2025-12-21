@@ -102,3 +102,40 @@ def test_disconnect_safety():
     conn._disconnect()
     assert conn.conn is None
     assert conn._outstanding_response is None
+
+def test_connection_reset_recovery():
+    """Test that connection errors are handled gracefully and connection is reset."""
+    import unittest.mock as mock
+
+    conn = s3lib.Connection("someaccess", b"somesecret")
+    conn._connect()
+
+    # Mock the underlying HTTP connection to simulate a connection reset
+    mock_http_conn = mock.Mock()
+    mock_http_conn.request.side_effect = ConnectionResetError("Connection reset by peer")
+    conn.conn = mock_http_conn
+
+    # Try to make a request - should clean up and re-raise
+    with pytest.raises(ConnectionResetError):
+        conn._s3_request("GET", "bucket", "key", {}, {}, '')
+
+    # Connection should have been cleaned up
+    assert conn.conn is None
+    assert conn._outstanding_response is None
+
+def test_disconnect_broken_connection():
+    """Test that disconnect handles already-broken connections gracefully."""
+    import unittest.mock as mock
+
+    conn = s3lib.Connection("someaccess", b"somesecret")
+    conn._connect()
+
+    # Mock connection that raises error when closing
+    mock_http_conn = mock.Mock()
+    mock_http_conn.close.side_effect = BrokenPipeError("Broken pipe")
+    conn.conn = mock_http_conn
+
+    # Should not raise - should handle the error gracefully
+    conn._disconnect()
+    assert conn.conn is None
+    assert conn._outstanding_response is None
