@@ -248,10 +248,7 @@ class Connection:
       headers['Content-MD5'] = content_md5
 
     try:
-      if sys.version_info >= (3, 0):
-        self.conn.request(method, resource, content, headers, encode_chunked=False)
-      else:
-        self.conn.request(method, resource, content, headers)
+      self.conn.request(method, resource, content, headers, encode_chunked=False)
       resp = self.conn.getresponse()
     except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError,
             OSError, http.client.HTTPException) as e:
