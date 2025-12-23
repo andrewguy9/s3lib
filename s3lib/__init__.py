@@ -386,3 +386,6 @@ def _calculate_query_arg_str(args):
     args_str = "?" + args_str
   return args_str
 
+# Import connection pooling classes
+from s3lib.pool import ConnectionPool, ConnectionLease
+
