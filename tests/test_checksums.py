@@ -616,7 +616,7 @@ def test_put_object_combined_checksum_and_conditional():
 
 
 def test_put_object_checksum_error_for_streaming():
-    """Test put_object raises error for checksum auto-calc on streaming data."""
+    """Test put_object raises error for checksum calc on streaming data when explicitly requested."""
     import unittest.mock as mock
     import s3lib
     import io
@@ -628,6 +628,6 @@ def test_put_object_checksum_error_for_streaming():
     # File-like object
     stream = io.BytesIO(b"stream data")
 
-    # Should raise ValueError
-    with pytest.raises(ValueError, match="Cannot auto-calculate"):
+    # Should raise ValueError when user explicitly requests checksum
+    with pytest.raises(ValueError, match="Cannot calculate"):
         conn.put_object("bucket", "key", stream, checksum_algorithm='SHA256')

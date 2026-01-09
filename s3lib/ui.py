@@ -172,6 +172,9 @@ Options:
     --host=<host>       Name of host.
     --port=<port>       Port to connect to.
     --creds=<creds>     Name of file to find aws access id and secret key.
+    --no-checksum       Disable checksum calculation (for stdin uploads)
+    --create-only       Only upload if object doesn't exist (returns 412 if exists)
+    --if-match=<etag>   Only upload if current ETag matches (optimistic locking)
 """
 
 def get_input_fd(path):
@@ -190,11 +193,32 @@ def put_main(argv=None):
       headers[key] = value
     except ValueError:
       raise ValueError("Header '%s' is not of form key:value" % header)
+
   with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
-    with get_input_fd(args.get('<file>')) as f:
-      (status, headers) = s3.put_object(args.get('<bucket>'), args.get('<object>'), f, headers)
+    file_path = args.get('<file>')
+
+    # Determine checksum setting
+    if args.get('--no-checksum'):
+      # User explicitly disabled checksumming
+      checksum_algorithm = None
+    else:
+      # Let put_object use default behavior:
+      # - stdin will be read into str/bytes by _s3_put_request, then auto-checksummed
+      # - files will remain as file objects and skip checksumming
+      checksum_algorithm = None
+
+    with get_input_fd(file_path) as f:
+      (status, resp_headers) = s3.put_object(
+        args.get('<bucket>'),
+        args.get('<object>'),
+        f,
+        headers,
+        checksum_algorithm=checksum_algorithm,
+        if_none_match=args.get('--create-only'),
+        if_match=args.get('--if-match')
+      )
     print("HTTP Code: ", status)
-    for (header, value) in headers:
+    for (header, value) in resp_headers:
       print("%s: %s" % (header, value))
 
 RM_USAGE = """

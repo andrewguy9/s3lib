@@ -166,7 +166,9 @@ class Connection:
     else:
         headers = dict(headers)
 
-    # Default to SHA256 for str/bytes data if no algorithm specified
+    # Determine which algorithm to use
+    # Default to SHA256 for str/bytes if no algorithm specified (best effort, no error)
+    user_requested_algo = checksum_algorithm is not None
     if checksum_algorithm is None and isinstance(data, (str, bytes)):
         checksum_algorithm = 'SHA256'
 
@@ -179,29 +181,36 @@ class Connection:
         else:
             # Need to calculate checksum
             checksum_value = calculate_checksum_if_possible(data, checksum_algorithm)
+
             if not checksum_value:
-                raise ValueError(
-                    f"Cannot auto-calculate {checksum_algorithm} for streaming data. "
-                    "Provide sha256_hint for SHA256 or use str/bytes data."
-                )
+                # If user explicitly requested algorithm, must succeed or error
+                if user_requested_algo:
+                    raise ValueError(
+                        f"Cannot calculate {checksum_algorithm} checksum for streaming data. "
+                        "Provide sha256_hint or use str/bytes data."
+                    )
+                # Otherwise (default algorithm), silently skip checksumming
+                else:
+                    checksum_algorithm = None
 
             # Special case: if calculating SHA256 and we don't have the hint yet,
             # calculate it once and reuse for signature
-            if checksum_algorithm == 'SHA256' and sha256_hint is None:
+            if checksum_value and checksum_algorithm == 'SHA256' and sha256_hint is None:
                 if isinstance(data, str):
                     data_bytes = data.encode('utf-8')
                 elif isinstance(data, bytes):
                     data_bytes = data
                 else:
-                    # This shouldn't happen because calculate_checksum_if_possible would have failed
-                    raise ValueError("Cannot calculate SHA256 for non-str/bytes data")
+                    data_bytes = None
 
-                from hashlib import sha256
-                sha256_hint = sha256(data_bytes).digest()
+                if data_bytes is not None:
+                    from hashlib import sha256
+                    sha256_hint = sha256(data_bytes).digest()
 
-        # Add modern checksum headers
-        headers['x-amz-checksum-algorithm'] = checksum_algorithm
-        headers[f'x-amz-checksum-{checksum_algorithm.lower()}'] = checksum_value
+        # Add modern checksum headers only if we successfully calculated
+        if checksum_algorithm and checksum_value:
+            headers['x-amz-checksum-algorithm'] = checksum_algorithm
+            headers[f'x-amz-checksum-{checksum_algorithm.lower()}'] = checksum_value
 
     # Handle conditional headers
     if if_none_match:
