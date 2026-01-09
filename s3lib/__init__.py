@@ -7,6 +7,7 @@ import time
 from xml.etree.ElementTree import fromstring as parse
 from xml.etree.ElementTree import Element, SubElement, tostring
 from s3lib.utils import split_headers, split_args, batchify, take, get_string_to_sign, raise_http_resp_error
+from s3lib.sigv4 import sign_request_v4, hash_payload, get_timestamp
 from urllib.parse import quote
 import sys
 import stat
@@ -21,13 +22,14 @@ class Connection:
   ############################
   # Python special functions #
   ############################
-  def __init__(self, access_id, secret, host=None, port=None, conn_timeout=None):
+  def __init__(self, access_id, secret, host=None, port=None, conn_timeout=None, region=None):
     """
-    access_id is ?
-    secret is bytes
-    host is maybe str
-    port is maybe int
-    conn_timeout is maybe int seconds
+    access_id is str - AWS access key ID
+    secret is bytes - AWS secret access key
+    host is maybe str - S3 endpoint hostname
+    port is maybe int - port number
+    conn_timeout is maybe int seconds - connection timeout
+    region is maybe str - AWS region (defaults to us-east-1 or AWS_DEFAULT_REGION)
     """
     assert isinstance(secret, bytes)
     self.access_id = access_id
@@ -37,6 +39,8 @@ class Connection:
     self.conn_timeout = conn_timeout
     self.conn = None
     self._outstanding_response = None
+    # Default region: env var > us-east-1 (matches boto3 behavior)
+    self.region = region or os.environ.get('AWS_DEFAULT_REGION') or 'us-east-1'
 
   def __enter__(self):
     self._connect()
@@ -210,45 +214,146 @@ class Connection:
     return (resp.status, resp.getheaders())
 
   def _s3_request(self, method, bucket, key, args, headers, content):
+    """
+    Make an S3 request using AWS Signature Version 4.
+
+    Automatically handles region discovery from 307 redirects.
+    """
+
     #TODO add abilityo to pass optional Content-MD5 value.
 
     # Validate that previous response was consumed before making a new request
     self._validate_connection_ready()
 
     http_now = time.strftime('%a, %d %b %Y %H:%M:%S +0000', time.gmtime())
+    # Initialize bucket region cache if not present
+    if not hasattr(self, '_bucket_regions'):
+      self._bucket_regions = {}
 
-    canonical_resource = "/"
+    # Use cached region for this bucket if available
+    if bucket and bucket in self._bucket_regions:
+      self.region = self._bucket_regions[bucket]
+
+    # Try the request, handling redirects for region discovery
+    max_redirects = 2
+    for attempt in range(max_redirects):
+      resp = self._s3_request_inner(method, bucket, key, args, headers.copy(), content)
+
+      # Check for redirect responses (301 or 307)
+      if resp.status in (301, 307):
+        # Read the response body to reset the connection
+        resp.read()
+
+        # Extract the correct region from response headers
+        resp_headers = dict(resp.getheaders())
+        discovered_region = resp_headers.get('x-amz-bucket-region')
+
+        if discovered_region and bucket:
+          # Cache the discovered region for this bucket
+          self._bucket_regions[bucket] = discovered_region
+          self.region = discovered_region
+          # Clear the current endpoint so we reconnect with the new region
+          if hasattr(self, '_current_endpoint'):
+            delattr(self, '_current_endpoint')
+          # Retry the request with the correct region
+          continue
+
+      # Not a redirect, return the response
+      return resp
+
+    # If we exhausted retries, return the last response
+    return resp
+
+  def _s3_request_inner(self, method, bucket, key, args, headers, content):
+    """
+    Inner request method that performs a single S3 request.
+    Called by _s3_request which handles redirect retries.
+    """
+    # Build the URI path and host for the request
+    # Use regional endpoints for non us-east-1 to avoid redirects
     if bucket:
-      canonical_resource += bucket + "/"
+      # Build regional endpoint if not using default host
+      if self.host == "s3.amazonaws.com" and self.region != "us-east-1":
+        # Use regional endpoint format: bucket.s3-REGION.amazonaws.com
+        # This format works for all regions and avoids 301 redirects
+        host = f"{bucket}.s3-{self.region}.amazonaws.com"
+        # Only reconnect if we're not already connected to this endpoint
+        if not hasattr(self, '_current_endpoint') or self._current_endpoint != host:
+          if hasattr(self, 'conn'):
+            self._disconnect()
+          self.conn = http.client.HTTPConnection(host, self.port, timeout=self.conn_timeout)
+          self._current_endpoint = host
+      else:
+        host = bucket + "." + self.host
+      uri = "/"
       if key:
-        canonical_resource += key
-    canonical_resource += _calculate_query_arg_str(split_args(args))
-
-    resource = "/"
-    if key:
-      resource += key
-    resource = quote(resource)
-    resource += _calculate_query_arg_str(args)
-
-    content_type = headers.get('Content-Type', '')
-    content_md5 = sign_content_if_possible(content)
-    (amz_headers, reg_headers) = split_headers(headers)
-    string_to_sign = get_string_to_sign(method, content_md5, content_type, http_now, amz_headers, canonical_resource)
-    signature = sign(self.secret, string_to_sign)
-
-    if bucket:
-      host = bucket + "." + self.host
+        uri += key
     else:
       host = self.host
+      uri = "/"
+
+    # URI-encode the path (already done by sign_request_v4, but we need it for the HTTP request)
+    resource = quote(uri, safe='/')
+
+    # Build query string from args
+    # For SigV4, subresources (like ?delete) must have = even with no value
+    if args:
+      query_parts = []
+      for arg, value in sorted(args.items()):  # Sort for consistent ordering
+        if value is not None:
+          query_parts.append(f"{quote(arg, safe='')}={quote(value, safe='')}")
+        else:
+          query_parts.append(f"{quote(arg, safe='')}=")  # Subresource with =
+      query_string = '&'.join(query_parts)
+      resource += '?' + query_string
+    else:
+      query_string = ''
+
+    # Calculate payload hash for SigV4
+    if isinstance(content, (str, bytes)):
+      payload_hash = hash_payload(content)
+    else:
+      # For file-like objects, we can't hash without reading the entire content
+      # S3 allows UNSIGNED-PAYLOAD for this case
+      payload_hash = "UNSIGNED-PAYLOAD"
+
+    # Get current timestamp in ISO 8601 format for SigV4
+    timestamp = get_timestamp()
+
+    # Add required SigV4 headers
     headers["Host"] = host
-    headers["Date"] = http_now
-    headers["Authorization"] = "AWS %s:%s" % (self.access_id, signature.decode('ascii'))
+    headers["x-amz-date"] = timestamp
+    headers["x-amz-content-sha256"] = payload_hash
     headers["Connection"] = "keep-alive"
+
+    # Optionally add Content-MD5 if content can be signed
+    content_md5 = sign_content_if_possible(content)
     if content_md5 != '':
       headers['Content-MD5'] = content_md5
 
+    # Sign the request using SigV4
+    authorization_header = sign_request_v4(
+      method=method,
+      uri=uri,
+      query_string=query_string,
+      headers=headers,
+      payload_hash=payload_hash,
+      access_key_id=self.access_id,
+      secret_key=self.secret,
+      region=self.region,
+      service='s3',
+      timestamp=timestamp
+    )
+
+    headers["Authorization"] = authorization_header
+
+    # Make the HTTP request
     try:
-      self.conn.request(method, resource, content, headers, encode_chunked=False)
+      if sys.version_info >= (3, 0):
+        self.conn.request(method, resource, content, headers, encode_chunked=False)
+      else:
+        self.conn.request(method, resource, content, headers)
+
       resp = self.conn.getresponse()
     except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError,
             OSError, http.client.HTTPException) as e:
@@ -285,6 +390,9 @@ class Connection:
   def _connect(self):
     if self.conn is None:
       self.conn = http.client.HTTPConnection(self.host, self.port, timeout=self.conn_timeout)
+      self._current_endpoint = self.host
+    else:
+        assert self._curent_endpoint is not None
 
   def _disconnect(self):
     if self.conn is not None:
