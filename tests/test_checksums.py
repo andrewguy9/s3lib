@@ -197,3 +197,437 @@ def test_checksum_algorithms_consistency():
     base64.b64decode(sha256_checksum)
     base64.b64decode(sha1_checksum)
     base64.b64decode(md5_checksum)
+
+
+def test_s3_request_inner_with_provided_sha256():
+    """Test _s3_request_inner uses provided sha256_hint."""
+    import unittest.mock as mock
+    import s3lib
+
+    # Create connection
+    conn = s3lib.Connection("test_key", b"test_secret")
+    conn._connect()
+
+    # Pre-calculate SHA256 digest as bytes
+    test_data = b"test payload data"
+    sha256_hint = sha256(test_data).digest()
+    expected_hex = sha256_hint.hex()
+
+    # Mock the HTTP connection to intercept the request
+    mock_http_conn = mock.Mock()
+    mock_response = mock.Mock()
+    mock_response.status = 200
+    mock_response.getheaders.return_value = []
+    mock_response.read.return_value = b""
+    mock_response.isclosed.return_value = True
+    mock_http_conn.getresponse.return_value = mock_response
+    conn.conn = mock_http_conn
+
+    # Make request with provided hint (bytes)
+    try:
+        conn._s3_request_inner("PUT", "bucket", "key", {}, {}, test_data,
+                              sha256_hint=sha256_hint)
+    except Exception:
+        pass  # We expect this might fail due to mocking, but we can check the call
+
+    # Verify request was made with correct hash in headers
+    assert mock_http_conn.request.called
+    call_args = mock_http_conn.request.call_args
+    headers = call_args[0][3]  # Fourth positional arg is headers
+
+    # Check that x-amz-content-sha256 header matches our hint (converted to hex)
+    assert headers.get("x-amz-content-sha256") == expected_hex
+
+
+def test_s3_request_inner_calculates_sha256_when_not_provided():
+    """Test _s3_request_inner calculates SHA256 when not provided."""
+    import unittest.mock as mock
+    import s3lib
+
+    # Create connection
+    conn = s3lib.Connection("test_key", b"test_secret")
+    conn._connect()
+
+    # Test data
+    test_data = b"test payload data"
+    expected_hash_hex = sha256(test_data).hexdigest()
+
+    # Mock the HTTP connection
+    mock_http_conn = mock.Mock()
+    mock_response = mock.Mock()
+    mock_response.status = 200
+    mock_response.getheaders.return_value = []
+    mock_response.read.return_value = b""
+    mock_response.isclosed.return_value = True
+    mock_http_conn.getresponse.return_value = mock_response
+    conn.conn = mock_http_conn
+
+    # Make request WITHOUT providing hash
+    try:
+        conn._s3_request_inner("PUT", "bucket", "key", {}, {}, test_data)
+    except Exception:
+        pass
+
+    # Verify hash was calculated correctly
+    assert mock_http_conn.request.called
+    call_args = mock_http_conn.request.call_args
+    headers = call_args[0][3]
+
+    assert headers.get("x-amz-content-sha256") == expected_hash_hex
+
+
+def test_s3_request_inner_unsigned_payload_for_streams():
+    """Test _s3_request_inner uses UNSIGNED-PAYLOAD for file objects."""
+    import unittest.mock as mock
+    import s3lib
+    import io
+
+    # Create connection
+    conn = s3lib.Connection("test_key", b"test_secret")
+    conn._connect()
+
+    # File-like object
+    stream = io.BytesIO(b"stream data")
+
+    # Mock the HTTP connection
+    mock_http_conn = mock.Mock()
+    mock_response = mock.Mock()
+    mock_response.status = 200
+    mock_response.getheaders.return_value = []
+    mock_response.read.return_value = b""
+    mock_response.isclosed.return_value = True
+    mock_http_conn.getresponse.return_value = mock_response
+    conn.conn = mock_http_conn
+
+    # Make request with stream
+    try:
+        conn._s3_request_inner("PUT", "bucket", "key", {}, {}, stream)
+    except Exception:
+        pass
+
+    # Verify UNSIGNED-PAYLOAD is used
+    assert mock_http_conn.request.called
+    call_args = mock_http_conn.request.call_args
+    headers = call_args[0][3]
+
+    assert headers.get("x-amz-content-sha256") == "UNSIGNED-PAYLOAD"
+
+
+def test_s3_request_inner_with_provided_md5():
+    """Test _s3_request_inner uses provided md5_hint."""
+    import unittest.mock as mock
+    import s3lib
+
+    # Create connection
+    conn = s3lib.Connection("test_key", b"test_secret")
+    conn._connect()
+
+    # Pre-calculate MD5 digest as bytes
+    test_data = b"test payload data"
+    md5_hint = md5(test_data).digest()
+    expected_b64 = binascii.b2a_base64(md5_hint).strip().decode('ascii')
+
+    # Mock the HTTP connection
+    mock_http_conn = mock.Mock()
+    mock_response = mock.Mock()
+    mock_response.status = 200
+    mock_response.getheaders.return_value = []
+    mock_response.read.return_value = b""
+    mock_response.isclosed.return_value = True
+    mock_http_conn.getresponse.return_value = mock_response
+    conn.conn = mock_http_conn
+
+    # Make request with provided MD5 hint (bytes)
+    try:
+        conn._s3_request_inner("PUT", "bucket", "key", {}, {}, test_data,
+                              md5_hint=md5_hint)
+    except Exception:
+        pass
+
+    # Verify Content-MD5 header was set correctly
+    assert mock_http_conn.request.called
+    call_args = mock_http_conn.request.call_args
+    headers = call_args[0][3]
+
+    # Check that Content-MD5 header matches our hint (converted to base64)
+    assert headers.get("Content-MD5") == expected_b64
+
+
+def test_put_object_with_sha256_checksum_auto_calc():
+    """Test put_object with SHA256 checksum auto-calculation."""
+    import unittest.mock as mock
+    import s3lib
+
+    # Create connection
+    conn = s3lib.Connection("test_key", b"test_secret")
+    conn._connect()
+
+    test_data = b"test data"
+    expected_checksum = calculate_checksum(test_data, 'SHA256')
+
+    # Mock the HTTP connection
+    mock_http_conn = mock.Mock()
+    mock_response = mock.Mock()
+    mock_response.status = 200
+    mock_response.getheaders.return_value = []
+    mock_response.read.return_value = b""
+    mock_response.isclosed.return_value = True
+    mock_http_conn.getresponse.return_value = mock_response
+    conn.conn = mock_http_conn
+
+    # Call put_object with checksum_algorithm
+    try:
+        conn.put_object("bucket", "key", test_data, checksum_algorithm='SHA256')
+    except Exception:
+        pass
+
+    # Verify checksum headers were added
+    assert mock_http_conn.request.called
+    call_args = mock_http_conn.request.call_args
+    headers = call_args[0][3]
+
+    assert headers.get('x-amz-checksum-algorithm') == 'SHA256'
+    assert headers.get('x-amz-checksum-sha256') == expected_checksum
+
+
+def test_put_object_with_provided_sha256_hint():
+    """Test put_object with user-provided SHA256 hint (reuses for signature)."""
+    import unittest.mock as mock
+    import s3lib
+
+    # Create connection
+    conn = s3lib.Connection("test_key", b"test_secret")
+    conn._connect()
+
+    test_data = b"test data"
+    sha256_hint = sha256(test_data).digest()
+    expected_checksum = binascii.b2a_base64(sha256_hint).strip().decode('ascii')
+    expected_hash = sha256_hint.hex()
+
+    # Mock the HTTP connection
+    mock_http_conn = mock.Mock()
+    mock_response = mock.Mock()
+    mock_response.status = 200
+    mock_response.getheaders.return_value = []
+    mock_response.read.return_value = b""
+    mock_response.isclosed.return_value = True
+    mock_http_conn.getresponse.return_value = mock_response
+    conn.conn = mock_http_conn
+
+    # Call put_object with hint and checksum_algorithm
+    try:
+        conn.put_object("bucket", "key", test_data,
+                       sha256_hint=sha256_hint,
+                       checksum_algorithm='SHA256')
+    except Exception:
+        pass
+
+    # Verify both checksum and signature headers
+    assert mock_http_conn.request.called
+    call_args = mock_http_conn.request.call_args
+    headers = call_args[0][3]
+
+    # Checksum headers (base64)
+    assert headers.get('x-amz-checksum-algorithm') == 'SHA256'
+    assert headers.get('x-amz-checksum-sha256') == expected_checksum
+    # Signature header (hex)
+    assert headers.get('x-amz-content-sha256') == expected_hash
+
+
+def test_put_object_with_sha1_checksum():
+    """Test put_object with SHA1 checksum."""
+    import unittest.mock as mock
+    import s3lib
+
+    # Create connection
+    conn = s3lib.Connection("test_key", b"test_secret")
+    conn._connect()
+
+    test_data = b"test data"
+    expected_checksum = calculate_checksum(test_data, 'SHA1')
+
+    # Mock the HTTP connection
+    mock_http_conn = mock.Mock()
+    mock_response = mock.Mock()
+    mock_response.status = 200
+    mock_response.getheaders.return_value = []
+    mock_response.read.return_value = b""
+    mock_response.isclosed.return_value = True
+    mock_http_conn.getresponse.return_value = mock_response
+    conn.conn = mock_http_conn
+
+    # Call put_object with SHA1
+    try:
+        conn.put_object("bucket", "key", test_data, checksum_algorithm='SHA1')
+    except Exception:
+        pass
+
+    # Verify SHA1 checksum headers
+    assert mock_http_conn.request.called
+    call_args = mock_http_conn.request.call_args
+    headers = call_args[0][3]
+
+    assert headers.get('x-amz-checksum-algorithm') == 'SHA1'
+    assert headers.get('x-amz-checksum-sha1') == expected_checksum
+
+
+def test_put_object_with_md5_checksum():
+    """Test put_object with MD5 checksum."""
+    import unittest.mock as mock
+    import s3lib
+
+    # Create connection
+    conn = s3lib.Connection("test_key", b"test_secret")
+    conn._connect()
+
+    test_data = b"test data"
+    expected_checksum = calculate_checksum(test_data, 'MD5')
+
+    # Mock the HTTP connection
+    mock_http_conn = mock.Mock()
+    mock_response = mock.Mock()
+    mock_response.status = 200
+    mock_response.getheaders.return_value = []
+    mock_response.read.return_value = b""
+    mock_response.isclosed.return_value = True
+    mock_http_conn.getresponse.return_value = mock_response
+    conn.conn = mock_http_conn
+
+    # Call put_object with MD5
+    try:
+        conn.put_object("bucket", "key", test_data, checksum_algorithm='MD5')
+    except Exception:
+        pass
+
+    # Verify MD5 checksum headers
+    assert mock_http_conn.request.called
+    call_args = mock_http_conn.request.call_args
+    headers = call_args[0][3]
+
+    assert headers.get('x-amz-checksum-algorithm') == 'MD5'
+    assert headers.get('x-amz-checksum-md5') == expected_checksum
+
+
+def test_put_object_with_if_none_match():
+    """Test put_object with If-None-Match (create-only)."""
+    import unittest.mock as mock
+    import s3lib
+
+    # Create connection
+    conn = s3lib.Connection("test_key", b"test_secret")
+    conn._connect()
+
+    # Mock the HTTP connection
+    mock_http_conn = mock.Mock()
+    mock_response = mock.Mock()
+    mock_response.status = 200
+    mock_response.getheaders.return_value = []
+    mock_response.read.return_value = b""
+    mock_response.isclosed.return_value = True
+    mock_http_conn.getresponse.return_value = mock_response
+    conn.conn = mock_http_conn
+
+    # Call put_object with if_none_match
+    try:
+        conn.put_object("bucket", "key", b"test data", if_none_match=True)
+    except Exception:
+        pass
+
+    # Verify If-None-Match header
+    assert mock_http_conn.request.called
+    call_args = mock_http_conn.request.call_args
+    headers = call_args[0][3]
+
+    assert headers.get('If-None-Match') == '*'
+
+
+def test_put_object_with_if_match():
+    """Test put_object with If-Match (optimistic locking)."""
+    import unittest.mock as mock
+    import s3lib
+
+    # Create connection
+    conn = s3lib.Connection("test_key", b"test_secret")
+    conn._connect()
+
+    # Mock the HTTP connection
+    mock_http_conn = mock.Mock()
+    mock_response = mock.Mock()
+    mock_response.status = 200
+    mock_response.getheaders.return_value = []
+    mock_response.read.return_value = b""
+    mock_response.isclosed.return_value = True
+    mock_http_conn.getresponse.return_value = mock_response
+    conn.conn = mock_http_conn
+
+    # Call put_object with if_match
+    test_etag = '"abc123"'
+    try:
+        conn.put_object("bucket", "key", b"test data", if_match=test_etag)
+    except Exception:
+        pass
+
+    # Verify If-Match header
+    assert mock_http_conn.request.called
+    call_args = mock_http_conn.request.call_args
+    headers = call_args[0][3]
+
+    assert headers.get('If-Match') == test_etag
+
+
+def test_put_object_combined_checksum_and_conditional():
+    """Test put_object with both checksum and conditional headers."""
+    import unittest.mock as mock
+    import s3lib
+
+    # Create connection
+    conn = s3lib.Connection("test_key", b"test_secret")
+    conn._connect()
+
+    test_data = b"test data"
+    expected_checksum = calculate_checksum(test_data, 'SHA256')
+
+    # Mock the HTTP connection
+    mock_http_conn = mock.Mock()
+    mock_response = mock.Mock()
+    mock_response.status = 200
+    mock_response.getheaders.return_value = []
+    mock_response.read.return_value = b""
+    mock_response.isclosed.return_value = True
+    mock_http_conn.getresponse.return_value = mock_response
+    conn.conn = mock_http_conn
+
+    # Call put_object with both checksum and if_none_match
+    try:
+        conn.put_object("bucket", "key", test_data,
+                       checksum_algorithm='SHA256',
+                       if_none_match=True)
+    except Exception:
+        pass
+
+    # Verify both headers
+    assert mock_http_conn.request.called
+    call_args = mock_http_conn.request.call_args
+    headers = call_args[0][3]
+
+    assert headers.get('x-amz-checksum-algorithm') == 'SHA256'
+    assert headers.get('x-amz-checksum-sha256') == expected_checksum
+    assert headers.get('If-None-Match') == '*'
+
+
+def test_put_object_checksum_error_for_streaming():
+    """Test put_object raises error for checksum auto-calc on streaming data."""
+    import unittest.mock as mock
+    import s3lib
+    import io
+
+    # Create connection
+    conn = s3lib.Connection("test_key", b"test_secret")
+    conn._connect()
+
+    # File-like object
+    stream = io.BytesIO(b"stream data")
+
+    # Should raise ValueError
+    with pytest.raises(ValueError, match="Cannot auto-calculate"):
+        conn.put_object("bucket", "key", stream, checksum_algorithm='SHA256')

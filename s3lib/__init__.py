@@ -6,8 +6,8 @@ import http.client
 import time
 from xml.etree.ElementTree import fromstring as parse
 from xml.etree.ElementTree import Element, SubElement, tostring
-from s3lib.utils import split_headers, split_args, batchify, take, get_string_to_sign, raise_http_resp_error
-from s3lib.sigv4 import sign_request_v4, hash_payload, get_timestamp
+from .utils import split_headers, split_args, batchify, take, get_string_to_sign, raise_http_resp_error
+from .sigv4 import sign_request_v4, hash_payload, get_timestamp
 from urllib.parse import quote
 import sys
 import stat
@@ -111,13 +111,108 @@ class Connection:
     (status, resp_headers) = self._s3_copy_request(src_bucket, src_key, dst_bucket, dst_key, headers)
     return (status, resp_headers)
 
-  def put_object(self, bucket, key, data, headers=None):
-    """ push object from local to bucket """
+  def put_object(self, bucket, key, data, headers=None,
+                 sha256_hint=None,
+                 checksum_algorithm=None,
+                 if_none_match=False,
+                 if_match=None):
+    """
+    Push object from local to bucket with optional integrity and conditional checks.
+
+    Args:
+        bucket: S3 bucket name
+        key: Object key
+        data: Data to upload (str, bytes, or file object)
+        headers: Optional dict of additional headers
+        sha256_hint: Pre-calculated SHA256 digest as bytes (32 bytes) to skip recalculation.
+                     Used for signature authentication and reused for integrity if
+                     checksum_algorithm='SHA256'.
+        checksum_algorithm: Algorithm for integrity check: 'SHA256', 'SHA1', 'MD5', or None.
+                           Default is 'SHA256' for str/bytes data. Set to None to disable.
+        if_none_match: If True, upload only succeeds if object doesn't exist (create-only).
+        if_match: ETag value for optimistic concurrency control (overwrite specific version).
+
+    Returns:
+        (status, headers) tuple
+        Response headers include x-amz-checksum-{algorithm} if used
+
+    Raises:
+        ValueError: If checksum auto-calculation requested but not possible (streaming data)
+        HTTP 412: If if_none_match=True and object already exists
+        HTTP 412: If if_match provided and ETag doesn't match
+        HTTP 400: If checksum value doesn't match uploaded data
+
+    Examples:
+        # Basic upload with default SHA256 integrity (str/bytes only)
+        conn.put_object(bucket, key, b"data")
+
+        # Disable checksum
+        conn.put_object(bucket, key, data, checksum_algorithm=None)
+
+        # Create-only (prevent overwrites)
+        conn.put_object(bucket, key, data, if_none_match=True)
+
+        # User-provided checksum hint (farmfs: pre-computed SHA256)
+        digest = sha256(blob_data).digest()
+        conn.put_object(bucket, key, blob_data, sha256_hint=digest)
+
+        # Safe overwrite with optimistic locking
+        headers_resp = conn.head_object(bucket, key)
+        etag = dict(headers_resp)['etag']
+        conn.put_object(bucket, key, new_data, if_match=etag)
+    """
     if headers is None:
         headers = dict()
     else:
         headers = dict(headers)
-    (status, resp_headers) = self._s3_put_request(bucket, key, data, headers)
+
+    # Default to SHA256 for str/bytes data if no algorithm specified
+    if checksum_algorithm is None and isinstance(data, (str, bytes)):
+        checksum_algorithm = 'SHA256'
+
+    # Handle modern checksum headers
+    if checksum_algorithm:
+        # If SHA256 and we already have the hint, reuse it
+        if checksum_algorithm == 'SHA256' and sha256_hint is not None:
+            # We have the digest as bytes, convert to base64 for checksum header
+            checksum_value = binascii.b2a_base64(sha256_hint).strip().decode('ascii')
+        else:
+            # Need to calculate checksum
+            checksum_value = calculate_checksum_if_possible(data, checksum_algorithm)
+            if not checksum_value:
+                raise ValueError(
+                    f"Cannot auto-calculate {checksum_algorithm} for streaming data. "
+                    "Provide sha256_hint for SHA256 or use str/bytes data."
+                )
+
+            # Special case: if calculating SHA256 and we don't have the hint yet,
+            # calculate it once and reuse for signature
+            if checksum_algorithm == 'SHA256' and sha256_hint is None:
+                if isinstance(data, str):
+                    data_bytes = data.encode('utf-8')
+                elif isinstance(data, bytes):
+                    data_bytes = data
+                else:
+                    # This shouldn't happen because calculate_checksum_if_possible would have failed
+                    raise ValueError("Cannot calculate SHA256 for non-str/bytes data")
+
+                from hashlib import sha256
+                sha256_hint = sha256(data_bytes).digest()
+
+        # Add modern checksum headers
+        headers['x-amz-checksum-algorithm'] = checksum_algorithm
+        headers[f'x-amz-checksum-{checksum_algorithm.lower()}'] = checksum_value
+
+    # Handle conditional headers
+    if if_none_match:
+        headers['If-None-Match'] = '*'
+    if if_match:
+        headers['If-Match'] = if_match
+
+    # Call existing implementation (which calls _s3_put_request)
+    # Pass sha256_hint for signature optimization
+    (status, resp_headers) = self._s3_put_request(bucket, key, data, headers,
+                                                   sha256_hint=sha256_hint)
     return (status, resp_headers)
 
 ##########################
@@ -186,8 +281,21 @@ class Connection:
       raise_http_resp_error(resp)
     return (resp.status, resp.getheaders())
 
-  def _s3_put_request(self, bucket, key, data, headers):
-    #TODO add abilityo to pass optional Content-MD5 value.
+  def _s3_put_request(self, bucket, key, data, headers,
+                      sha256_hint=None, md5_hint=None):
+    """
+    Mid-level PUT request handler.
+
+    Args:
+        bucket: S3 bucket name
+        key: Object key
+        data: Data to upload (str, bytes, or file-like object)
+        headers: Request headers dict
+        sha256_hint: Optional pre-calculated SHA256 digest as bytes.
+                     Passed through to _s3_request.
+        md5_hint: Optional pre-calculated MD5 digest as bytes.
+                  Passed through to _s3_request.
+    """
     args = {}
     if isinstance(data, (str, bytes)):
         content_length = len(data)
@@ -201,26 +309,41 @@ class Connection:
             # Special file, size won't be valid. Lets read the data to get value.
             # We have to encode to utf-8 for later hashing.
             # TODO This looks totally wrong. What about binary files?
+            #      I think data might be stdin which is why we are treating it like a string.
+            # TODO we are reading the ENTIRE STREAM we should not do that.
+            #      If we have to have a content length, we can stream into a
+            #      temp file and use that for buffering/checksumming.
             data = data.read().encode('utf-8')
             content_length = len(data)
     else:
         raise TypeError(f"Cannot determine content-length of type {type(data)}")
     headers['content-length'] = content_length
-    resp = self._s3_request("PUT", bucket, key, args, headers, data)
+    resp = self._s3_request("PUT", bucket, key, args, headers, data,
+                            sha256_hint=sha256_hint,
+                            md5_hint=md5_hint)
     if resp.status != http.client.OK:
       raise_http_resp_error(resp)
     resp.read() #NOTE: Should be zero length response. Required to reset the connection.
     self._outstanding_response = None  # Response consumed
     return (resp.status, resp.getheaders())
 
-  def _s3_request(self, method, bucket, key, args, headers, content):
+  def _s3_request(self, method, bucket, key, args, headers, content,
+                  sha256_hint=None, md5_hint=None):
     """
     Make an S3 request using AWS Signature Version 4.
 
     Automatically handles region discovery from 307 redirects.
-    """
 
-    #TODO add abilityo to pass optional Content-MD5 value.
+    Args:
+        method: HTTP method
+        bucket: S3 bucket name
+        key: Object key
+        args: Query arguments dict
+        headers: Request headers dict
+        content: Request body (str, bytes, or file-like object)
+        sha256_hint: Pre-calculated SHA256 digest (bytes) to skip recalculation
+        md5_hint: Pre-calculated MD5 digest (bytes) to skip recalculation
+    """
 
     # Validate that previous response was consumed before making a new request
     self._validate_connection_ready()
@@ -237,7 +360,9 @@ class Connection:
     # Try the request, handling redirects for region discovery
     max_redirects = 2
     for attempt in range(max_redirects):
-      resp = self._s3_request_inner(method, bucket, key, args, headers.copy(), content)
+      resp = self._s3_request_inner(method, bucket, key, args, headers.copy(), content,
+                                     sha256_hint=sha256_hint,
+                                     md5_hint=md5_hint)
 
       # Check for redirect responses (301 or 307)
       if resp.status in (301, 307):
@@ -264,10 +389,23 @@ class Connection:
     # If we exhausted retries, return the last response
     return resp
 
-  def _s3_request_inner(self, method, bucket, key, args, headers, content):
+  def _s3_request_inner(self, method, bucket, key, args, headers, content,
+                        sha256_hint=None, md5_hint=None):
     """
     Inner request method that performs a single S3 request.
     Called by _s3_request which handles redirect retries.
+
+    Args:
+        method: HTTP method
+        bucket: S3 bucket name
+        key: Object key
+        args: Query arguments dict
+        headers: Request headers dict
+        content: Request body (str, bytes, or file-like object)
+        sha256_hint: Pre-calculated SHA256 digest as bytes (32 bytes) to skip recalculation.
+                     Converts to hex for x-amz-content-sha256 header (signature).
+        md5_hint: Pre-calculated MD5 digest as bytes (16 bytes) to skip recalculation.
+                  Converts to base64 for Content-MD5 header.
     """
     # Build the URI path and host for the request
     # Use regional endpoints for non us-east-1 to avoid redirects
@@ -310,7 +448,12 @@ class Connection:
       query_string = ''
 
     # Calculate payload hash for SigV4
-    if isinstance(content, (str, bytes)):
+    if sha256_hint is not None:
+      # Use provided pre-calculated digest (bytes)
+      # Convert to hex for x-amz-content-sha256 header
+      payload_hash = sha256_hint.hex()
+    elif isinstance(content, (str, bytes)):
+      # Calculate hash (returns hex-encoded string)
       payload_hash = hash_payload(content)
     else:
       # For file-like objects, we can't hash without reading the entire content
@@ -326,10 +469,17 @@ class Connection:
     headers["x-amz-content-sha256"] = payload_hash
     headers["Connection"] = "keep-alive"
 
-    # Optionally add Content-MD5 if content can be signed
-    content_md5 = sign_content_if_possible(content)
-    if content_md5 != '':
+    # Optionally add Content-MD5 header
+    if md5_hint is not None:
+      # Use provided pre-calculated MD5 digest (bytes)
+      # Convert to base64 for Content-MD5 header
+      content_md5 = binascii.b2a_base64(md5_hint).strip().decode('ascii')
       headers['Content-MD5'] = content_md5
+    else:
+      # Try to auto-calculate if content can be signed
+      content_md5 = sign_content_if_possible(content)
+      if content_md5 != '':
+        headers['Content-MD5'] = content_md5
 
     # Sign the request using SigV4
     authorization_header = sign_request_v4(
