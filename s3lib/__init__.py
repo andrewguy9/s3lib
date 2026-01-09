@@ -426,6 +426,81 @@ def sign_content_if_possible(content):
 def sign_content(content):
   return binascii.b2a_base64(md5(content).digest()).strip().decode('ascii')
 
+###############################
+# Modern Checksum Utilities   #
+###############################
+
+def calculate_checksum(content, algorithm):
+  """
+  Calculate checksum for content using specified algorithm.
+
+  Args:
+      content: str or bytes to hash
+      algorithm: 'SHA256', 'SHA1', or 'MD5'
+
+  Returns:
+      Base64-encoded checksum string
+
+  Raises:
+      ValueError: If algorithm not supported
+      TypeError: If content is not str/bytes
+  """
+  if not isinstance(content, (str, bytes)):
+    raise TypeError("Content must be str or bytes for checksum calculation")
+
+  if isinstance(content, str):
+    content = content.encode('utf-8')
+
+  if algorithm == 'SHA256':
+    from hashlib import sha256
+    digest = sha256(content).digest()
+  elif algorithm == 'SHA1':
+    digest = sha1(content).digest()
+  elif algorithm == 'MD5':
+    digest = md5(content).digest()
+  else:
+    raise ValueError(f"Unsupported algorithm: {algorithm}. Use SHA256, SHA1, or MD5")
+
+  return binascii.b2a_base64(digest).strip().decode('ascii')
+
+
+def calculate_checksum_if_possible(content, algorithm):
+  """
+  Calculate checksum if content is str/bytes, otherwise return empty string.
+
+  Args:
+      content: Data to hash
+      algorithm: 'SHA256', 'SHA1', or 'MD5'
+
+  Returns:
+      Base64-encoded checksum, or '' if content is not str/bytes
+  """
+  if content != '' and isinstance(content, (str, bytes)):
+    return calculate_checksum(content, algorithm)
+  return ""
+
+
+def sha256_hex_to_base64(hex_string):
+  """
+  Convert hex-encoded SHA256 to base64-encoded.
+
+  Utility for converting signature hash format (hex) to integrity
+  checksum format (base64).
+
+  Args:
+      hex_string: Hex-encoded SHA256 (64 chars, lowercase)
+
+  Returns:
+      Base64-encoded SHA256 (44 chars)
+
+  Example:
+      hex_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      b64_hash = sha256_hex_to_base64(hex_hash)
+      # Returns: "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+  """
+  digest_bytes = bytes.fromhex(hex_string)
+  return binascii.b2a_base64(digest_bytes).strip().decode('ascii')
+
 #################################
 # XML Render Handling Functions #
 #################################
