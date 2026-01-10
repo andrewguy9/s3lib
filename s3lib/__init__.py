@@ -75,10 +75,20 @@ class Connection:
     for obj in self.list_bucket2(bucket, start, prefix, batch_size):
         yield obj[LIST_BUCKET_KEY]
 
-  def get_object(self, bucket, key):
-    """ pull down bucket object by key """
+  def get_object(self, bucket, key, headers=None):
+    """
+    Pull down bucket object by key.
+
+    Args:
+        bucket: S3 bucket name
+        key: Object key
+        headers: Optional dict of request headers (e.g., If-Match, If-None-Match)
+
+    Returns:
+        HTTPResponse object (may have status 200, 304, 412, etc.)
+    """
     #TODO Want to replace with some enter, exit struct.
-    return self._s3_get_request(bucket, key)
+    return self._s3_get_request(bucket, key, headers)
 
   def get_object_url(self, bucket, key, proto="https"):
     """get a public url for the object in the bucket."""
@@ -251,9 +261,12 @@ class Connection:
     self._outstanding_response = None  # Response consumed
     return data
 
-  def _s3_get_request(self, bucket, key):
-    resp = self._s3_request("GET", bucket, key, {}, {}, '')
-    if resp.status != http.client.OK:
+  def _s3_get_request(self, bucket, key, headers=None):
+    if headers is None:
+      headers = {}
+    resp = self._s3_request("GET", bucket, key, {}, headers, '')
+    # Don't raise for conditional response codes (304, 412) - caller handles them
+    if resp.status not in (http.client.OK, 304, 412):
       raise_http_resp_error(resp)
     return resp
 

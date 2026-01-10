@@ -90,24 +90,117 @@ GET_USAGE = """
 s3get -- Program reads an object in an s3 bucket.
 
 Usage:
-    s3ls [options] <bucket> <key>...
+    s3get [options] <bucket> <key> [<file>]
 
 Options:
-    --host=<host>       Name of host.
-    --port=<port>       Port to connect to.
-    --output=<output>   Name of output.
-    --creds=<creds>     Name of file to find aws access id and secret key.
+    --host=<host>           Name of host.
+    --port=<port>           Port to connect to.
+    --creds=<creds>         Name of file to find aws access id and secret key.
+    --no-verify-checksum    Disable checksum verification
+    --if-match=<etag>       Only download if ETag matches (error if changed)
+    --if-none-match=<etag>  Skip download if ETag matches (for caching)
 """
+
+def verified_copy(src, dst, verify=True):
+  """
+  Copy from HTTP response to destination, optionally verifying checksum.
+
+  Args:
+      src: HTTPResponse object (has .getheaders() and .read())
+      dst: File-like object to write to
+      verify: If True, verify x-amz-checksum-sha256/sha1/md5 if present
+
+  Raises:
+      ValueError: If checksum verification fails
+  """
+  # Check for available checksums (prefer SHA256 > SHA1 > MD5)
+  headers = dict(src.getheaders())
+  expected_checksum = None
+  algorithm = None
+
+  if headers.get('x-amz-checksum-sha256'):
+    expected_checksum = headers.get('x-amz-checksum-sha256')
+    algorithm = 'SHA256'
+  elif headers.get('x-amz-checksum-sha1'):
+    expected_checksum = headers.get('x-amz-checksum-sha1')
+    algorithm = 'SHA1'
+  elif headers.get('x-amz-checksum-md5'):
+    expected_checksum = headers.get('x-amz-checksum-md5')
+    algorithm = 'MD5'
+
+  if verify and expected_checksum and algorithm:
+    # Copy while hashing
+    if algorithm == 'SHA256':
+      from hashlib import sha256
+      hasher = sha256()
+    elif algorithm == 'SHA1':
+      from hashlib import sha1
+      hasher = sha1()
+    elif algorithm == 'MD5':
+      from hashlib import md5
+      hasher = md5()
+
+    buf = src.read(_BUFFSIZE)
+    while len(buf) > 0:
+      hasher.update(buf)
+      dst.write(buf)
+      buf = src.read(_BUFFSIZE)
+
+    # Verify
+    import binascii
+    actual_checksum = binascii.b2a_base64(hasher.digest()).strip().decode('ascii')
+    if actual_checksum != expected_checksum:
+      raise ValueError(
+        f"Checksum verification failed!\n"
+        f"Algorithm: {algorithm}\n"
+        f"Expected:  {expected_checksum}\n"
+        f"Actual:    {actual_checksum}"
+      )
+  else:
+    # No checksum or verification disabled - just copy
+    copy(src, dst)
 
 def get_main(argv=None):
   args = docopt(GET_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
   bucket = args.get('<bucket>')
-  with safeopen(args.get('--output'), 'wb') as outfile:
-    with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
-      for key in args.get('<key>'):
-          data = s3.get_object(bucket, key)
-          copy(data, outfile)
+  key = args.get('<key>')
+  file_path = args.get('<file>')
+  verify = not args.get('--no-verify-checksum')
+
+  with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
+    # Add conditional headers if specified
+    headers = {}
+    if args.get('--if-match'):
+      headers['If-Match'] = args.get('--if-match')
+    if args.get('--if-none-match'):
+      headers['If-None-Match'] = args.get('--if-none-match')
+
+    response = s3.get_object(bucket, key, headers)
+
+    # Handle conditional response codes
+    if response.status == 304:
+      # Not Modified - object hasn't changed, nothing to download
+      print("304 Not Modified - object unchanged", file=sys.stderr)
+      return
+    elif response.status == 412:
+      # Precondition Failed - ETag didn't match
+      print("412 Precondition Failed - ETag mismatch", file=sys.stderr)
+      sys.exit(1)
+    elif response.status != 200:
+      # Other error
+      print(f"HTTP {response.status}", file=sys.stderr)
+      sys.exit(1)
+
+    # Download and verify
+    if file_path is None:
+      # Write to stdout - don't close it
+      outfile = sys.stdout.buffer if hasattr(sys.stdout, 'buffer') else sys.stdout
+      verified_copy(response, outfile, verify=verify)
+    else:
+      # Write to file
+      with open(file_path, 'wb') as outfile:
+        verified_copy(response, outfile, verify=verify)
 
 CP_USAGE="""
 s3cp -- Program copies an object from one location to another.
