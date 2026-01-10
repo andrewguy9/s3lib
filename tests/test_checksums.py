@@ -560,19 +560,19 @@ def test_put_object_with_if_match():
     mock_http_conn.getresponse.return_value = mock_response
     conn.conn = mock_http_conn
 
-    # Call put_object with if_match
-    test_etag = '"abc123"'
+    # Call put_object with if_match (unquoted ETag)
+    test_etag = 'abc123'
     try:
         conn.put_object("bucket", "key", b"test data", if_match=test_etag)
     except Exception:
         pass
 
-    # Verify If-Match header
+    # Verify If-Match header (should have quotes added by library)
     assert mock_http_conn.request.called
     call_args = mock_http_conn.request.call_args
     headers = call_args[0][3]
 
-    assert headers.get('If-Match') == test_etag
+    assert headers.get('If-Match') == '"abc123"'
 
 
 def test_put_object_combined_checksum_and_conditional():
@@ -613,6 +613,76 @@ def test_put_object_combined_checksum_and_conditional():
     assert headers.get('x-amz-checksum-algorithm') == 'SHA256'
     assert headers.get('x-amz-checksum-sha256') == expected_checksum
     assert headers.get('If-None-Match') == '*'
+
+
+def test_get_object_with_if_match():
+    """Test get_object with If-Match (conditional download)."""
+    import unittest.mock as mock
+    import s3lib
+
+    # Create connection
+    conn = s3lib.Connection("test_key", b"test_secret")
+    conn._connect()
+
+    # Mock the HTTP connection
+    mock_http_conn = mock.Mock()
+    mock_response = mock.Mock()
+    mock_response.status = 200
+    mock_response.getheaders.return_value = []
+    mock_response.read.return_value = b"test data"
+    mock_response.isclosed.return_value = True
+    mock_http_conn.getresponse.return_value = mock_response
+    conn.conn = mock_http_conn
+
+    # Call get_object with if_match (unquoted ETag)
+    test_etag = 'abc123'
+    try:
+        conn.get_object("bucket", "key", if_match=test_etag)
+    except Exception:
+        pass
+
+    # Verify If-Match header (should have quotes added by library)
+    assert mock_http_conn.request.called
+    call_args = mock_http_conn.request.call_args
+    headers = call_args[0][3]
+
+    assert headers.get('If-Match') == '"abc123"'
+
+
+def test_get_object_with_if_none_match():
+    """Test get_object with If-None-Match (caching)."""
+    import unittest.mock as mock
+    import s3lib
+
+    # Create connection
+    conn = s3lib.Connection("test_key", b"test_secret")
+    conn._connect()
+
+    # Mock the HTTP connection
+    mock_http_conn = mock.Mock()
+    mock_response = mock.Mock()
+    mock_response.status = 304  # Not Modified
+    mock_response.getheaders.return_value = []
+    mock_response.read.return_value = b""
+    mock_response.isclosed.return_value = True
+    mock_http_conn.getresponse.return_value = mock_response
+    conn.conn = mock_http_conn
+
+    # Call get_object with if_none_match (unquoted ETag)
+    test_etag = 'abc123'
+    try:
+        response = conn.get_object("bucket", "key", if_none_match=test_etag)
+        # Should get 304 response
+        assert response.status == 304
+    except Exception:
+        pass
+
+    # Verify If-None-Match header (should have quotes added by library)
+    assert mock_http_conn.request.called
+    call_args = mock_http_conn.request.call_args
+    headers = call_args[0][3]
+
+    assert headers.get('If-None-Match') == '"abc123"'
 
 
 def test_put_object_checksum_error_for_streaming():

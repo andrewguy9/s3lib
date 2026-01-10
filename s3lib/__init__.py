@@ -75,18 +75,60 @@ class Connection:
     for obj in self.list_bucket2(bucket, start, prefix, batch_size):
         yield obj[LIST_BUCKET_KEY]
 
-  def get_object(self, bucket, key, headers=None):
+  def get_object(self, bucket, key, headers=None,
+                 if_match=None,
+                 if_none_match=None):
     """
-    Pull down bucket object by key.
+    Pull down bucket object by key with optional conditional checks.
 
     Args:
         bucket: S3 bucket name
         key: Object key
-        headers: Optional dict of request headers (e.g., If-Match, If-None-Match)
+        headers: Optional dict of additional request headers
+        if_match: ETag string (without quotes) - only download if current ETag matches
+                  Example: 'abc123def456'
+        if_none_match: ETag string (without quotes) - skip download if current ETag matches
+                       Example: 'abc123def456'
 
     Returns:
-        HTTPResponse object (may have status 200, 304, 412, etc.)
+        HTTPResponse object with status:
+        - 200: Success, object downloaded
+        - 304: Not Modified (if_none_match matched, object unchanged)
+        - 412: Precondition Failed (if_match didn't match, object changed)
+
+    Examples:
+        # Basic download
+        response = conn.get_object(bucket, key)
+        data = response.read()
+
+        # Only download if changed (caching)
+        headers = conn.head_object(bucket, key)
+        cached_etag = dict(headers)['etag'].strip('"')  # Remove quotes
+        response = conn.get_object(bucket, key, if_none_match=cached_etag)
+        if response.status == 304:
+            # Use cached version
+        else:
+            # Download new version
+            data = response.read()
+
+        # Ensure object hasn't changed
+        response = conn.get_object(bucket, key, if_match=expected_etag)
+        if response.status == 412:
+            # Object was modified
+        else:
+            data = response.read()
     """
+    if headers is None:
+        headers = dict()
+    else:
+        headers = dict(headers)
+
+    # Add conditional headers - quotes required by HTTP protocol
+    if if_match:
+        headers['If-Match'] = f'"{if_match}"'
+    if if_none_match:
+        headers['If-None-Match'] = f'"{if_none_match}"'
+
     #TODO Want to replace with some enter, exit struct.
     return self._s3_get_request(bucket, key, headers)
 
@@ -140,7 +182,8 @@ class Connection:
         checksum_algorithm: Algorithm for integrity check: 'SHA256', 'SHA1', 'MD5', or None.
                            Default is 'SHA256' for str/bytes data. Set to None to disable.
         if_none_match: If True, upload only succeeds if object doesn't exist (create-only).
-        if_match: ETag value for optimistic concurrency control (overwrite specific version).
+        if_match: ETag string (without quotes) for optimistic concurrency control.
+                  Example: 'abc123def456'
 
     Returns:
         (status, headers) tuple
@@ -168,7 +211,7 @@ class Connection:
 
         # Safe overwrite with optimistic locking
         headers_resp = conn.head_object(bucket, key)
-        etag = dict(headers_resp)['etag']
+        etag = dict(headers_resp)['etag'].strip('"')  # Remove quotes
         conn.put_object(bucket, key, new_data, if_match=etag)
     """
     if headers is None:
@@ -226,7 +269,7 @@ class Connection:
     if if_none_match:
         headers['If-None-Match'] = '*'
     if if_match:
-        headers['If-Match'] = if_match
+        headers['If-Match'] = f'"{if_match}"'
 
     # Call existing implementation (which calls _s3_put_request)
     # Pass sha256_hint for signature optimization

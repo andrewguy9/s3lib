@@ -169,14 +169,18 @@ def get_main(argv=None):
   verify = not args.get('--no-verify-checksum')
 
   with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
-    # Add conditional headers if specified
-    headers = {}
-    if args.get('--if-match'):
-      headers['If-Match'] = args.get('--if-match')
-    if args.get('--if-none-match'):
-      headers['If-None-Match'] = args.get('--if-none-match')
+    # Use structured API for conditional requests
+    # User provides ETags from command line (may or may not have quotes)
+    # Strip quotes if present to ensure consistent format
+    if_match = args.get('--if-match')
+    if if_match:
+      if_match = if_match.strip('"')
 
-    response = s3.get_object(bucket, key, headers)
+    if_none_match = args.get('--if-none-match')
+    if if_none_match:
+      if_none_match = if_none_match.strip('"')
+
+    response = s3.get_object(bucket, key, if_match=if_match, if_none_match=if_none_match)
 
     # Handle conditional response codes
     if response.status == 304:
@@ -300,6 +304,13 @@ def put_main(argv=None):
       # - files will remain as file objects and skip checksumming
       checksum_algorithm = None
 
+    # Handle ETag for conditional upload
+    # User provides ETag from command line (may or may not have quotes)
+    # Strip quotes if present to ensure consistent format
+    if_match = args.get('--if-match')
+    if if_match:
+      if_match = if_match.strip('"')
+
     with get_input_fd(file_path) as f:
       (status, resp_headers) = s3.put_object(
         args.get('<bucket>'),
@@ -308,7 +319,7 @@ def put_main(argv=None):
         headers,
         checksum_algorithm=checksum_algorithm,
         if_none_match=args.get('--create-only'),
-        if_match=args.get('--if-match')
+        if_match=if_match
       )
     print("HTTP Code: ", status)
     for (header, value) in resp_headers:
