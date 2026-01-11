@@ -6,6 +6,8 @@ from s3lib import Connection
 from s3lib import sign
 from s3lib import LIST_BUCKET_KEY
 from s3lib import LIST_BUCKET_ATTRIBUTES
+from s3lib import LIST_BUCKET_CHECKSUM_ATTRIBUTES
+from s3lib import LIST_BUCKET_ALL_ATTRIBUTES
 from safeoutput import open as safeopen
 from os import environ
 from docopt import docopt
@@ -63,8 +65,13 @@ Options:
     --prefix=<prefix>   Prefix to match on.
     --batch=<batch>     Batch size for s3 queries [default: 1000].
 
-Fields: %s
-""" % ",".join(LIST_BUCKET_ATTRIBUTES)
+Available fields:
+    Standard: %s
+    Checksums: %s
+
+    Note: List only returns ChecksumAlgorithm and ChecksumType.
+          Use s3head to get actual checksum values (SHA256, CRC64NVME, etc).
+""" % (",".join(LIST_BUCKET_ATTRIBUTES), ",".join(LIST_BUCKET_CHECKSUM_ATTRIBUTES))
 
 def ls_main(argv=None):
   args = docopt(LS_USAGE, argv)
@@ -79,7 +86,8 @@ def ls_main(argv=None):
         else:
             fields = [LIST_BUCKET_KEY]
         for obj in objs:
-          selected = [obj.get(field) for field in fields]
+          # Use empty string for missing fields (e.g., checksums not present)
+          selected = [obj.get(field) or '' for field in fields]
           print("\t".join(selected), file=outfile)
       else:
         buckets = s3.list_buckets()
@@ -300,7 +308,7 @@ def put_main(argv=None):
       checksum_algorithm = None
     else:
       # Let put_object use default behavior:
-      # - stdin will be read into str/bytes by _s3_put_request, then auto-checksummed
+      # - stdin/bytes will get SHA256 auto-calculated
       # - files will remain as file objects and skip checksumming
       checksum_algorithm = None
 
@@ -311,16 +319,32 @@ def put_main(argv=None):
     if if_match:
       if_match = if_match.strip('"')
 
-    with get_input_fd(file_path) as f:
+    # Read stdin into bytes so checksums can be calculated
+    # For regular files, pass file object to avoid memory issues
+    if file_path is None:
+      # stdin - read into bytes for checksum calculation
+      if hasattr(sys.stdin, 'buffer'):
+        data = sys.stdin.buffer.read()
+      else:
+        data = sys.stdin.read().encode('utf-8')
+    else:
+      # Regular file - pass as file object
+      data = open(file_path, 'rb')
+
+    try:
       (status, resp_headers) = s3.put_object(
         args.get('<bucket>'),
         args.get('<object>'),
-        f,
+        data,
         headers,
         checksum_algorithm=checksum_algorithm,
         if_none_match=args.get('--create-only'),
         if_match=if_match
       )
+    finally:
+      # Close file if we opened it
+      if file_path is not None and hasattr(data, 'close'):
+        data.close()
     print("HTTP Code: ", status)
     for (header, value) in resp_headers:
       print("%s: %s" % (header, value))
