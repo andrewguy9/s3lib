@@ -157,13 +157,13 @@ def test_automatic_region_discovery():
     # Create connection without specifying region (defaults to us-east-1)
     with s3lib.Connection(access_id, secret_key) as conn:
         # Test us-east-1 bucket (should work with default region)
-        buckets_east = list(conn.list_bucket('s3libtestbucket', batch_size=1))
+        buckets_east = list(conn.list_bucket('s3libtestbucket'))
         assert len(buckets_east) > 0
         # Verify region is still us-east-1
         assert conn.region == 'us-east-1'
 
         # Test us-west-1 bucket (should auto-discover region from redirect)
-        buckets_west = list(conn.list_bucket('s3libtestbucket2', batch_size=1))
+        buckets_west = list(conn.list_bucket('s3libtestbucket2'))
         assert len(buckets_west) > 0
         # Verify region was discovered and updated
         assert conn.region == 'us-west-1'
@@ -171,7 +171,7 @@ def test_automatic_region_discovery():
         assert conn._bucket_regions['s3libtestbucket2'] == 'us-west-1'
 
         # Test that subsequent requests to the same bucket use cached region
-        buckets_west_2 = list(conn.list_bucket('s3libtestbucket2', batch_size=1))
+        buckets_west_2 = list(conn.list_bucket('s3libtestbucket2'))
         assert len(buckets_west_2) > 0
         assert conn.region == 'us-west-1'
 
