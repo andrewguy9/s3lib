@@ -684,20 +684,23 @@ class Connection:
         import os
         request_start = time.time()
 
-        # Debug logging (enable with S3LIB_DEBUG=1)
-        if os.environ.get('S3LIB_DEBUG'):
-            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-
-            # Get socket identity for this request
-            sock_info = "not connected"
+        # Helper to get socket info
+        def get_sock_info():
             if hasattr(self.conn, 'sock') and self.conn.sock is not None:
                 try:
                     fd = self.conn.sock.fileno()
                     local_port = self.conn.sock.getsockname()[1]
                     remote_addr = self.conn.sock.getpeername()
-                    sock_info = f"fd={fd} local_port={local_port} remote={remote_addr}"
+                    return f"fd={fd} local_port={local_port} remote={remote_addr}"
                 except Exception as e:
-                    sock_info = f"error: {e}"
+                    return f"error: {e}"
+            return "not connected"
+
+        # Debug logging (enable with S3LIB_DEBUG=1)
+        debug_enabled = os.environ.get('S3LIB_DEBUG')
+        if debug_enabled:
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            sock_info = get_sock_info()
 
             # Log content info
             content_info = "empty"
@@ -725,7 +728,7 @@ class Connection:
                 self.conn.request(method, resource, content, headers)
             request_call_duration = time.time() - request_call_start
 
-            if os.environ.get('S3LIB_DEBUG'):
+            if debug_enabled:
                 if request_call_duration > 1.0:
                     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] WARNING: conn.request() took {request_call_duration:.2f}s", file=sys.stderr)
 
@@ -733,20 +736,10 @@ class Connection:
             resp = self.conn.getresponse()
             getresponse_duration = time.time() - getresponse_start
 
-            if os.environ.get('S3LIB_DEBUG'):
+            if debug_enabled:
                 total_duration = time.time() - request_start
                 timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-
-                # Get socket identity after response (may have changed if first request)
-                sock_info_after = "unknown"
-                if hasattr(self.conn, 'sock') and self.conn.sock is not None:
-                    try:
-                        fd = self.conn.sock.fileno()
-                        local_port = self.conn.sock.getsockname()[1]
-                        sock_info_after = f"fd={fd} local_port={local_port}"
-                    except Exception:
-                        sock_info_after = "error"
-
+                sock_info_after = get_sock_info()
                 print(f"[{timestamp}] DEBUG: Request completed in {total_duration:.2f}s (request: {request_call_duration:.2f}s, getresponse: {getresponse_duration:.2f}s), status: {resp.status}, socket: {sock_info_after}", file=sys.stderr)
         except (
             ConnectionResetError,
@@ -755,10 +748,22 @@ class Connection:
             OSError,
             http.client.HTTPException,
         ) as e:
+            # Log socket info before disconnect for debugging
+            if debug_enabled:
+                sock_info = get_sock_info()
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                print(f"[{timestamp}] DEBUG: Request failed with {type(e).__name__}: {e}, socket: {sock_info}", file=sys.stderr)
+
             # Connection is broken, clean it up so next call will reconnect
             self._disconnect()
             raise  # Re-raise for caller to handle/retry
-        except Exception:
+        except Exception as e:
+            # Log socket info before disconnect for debugging
+            if debug_enabled:
+                sock_info = get_sock_info()
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                print(f"[{timestamp}] DEBUG: Request failed with {type(e).__name__}: {e}, socket: {sock_info}", file=sys.stderr)
+
             # For any other exception, also disconnect to ensure clean state
             self._disconnect()
             raise
@@ -790,18 +795,12 @@ class Connection:
             self._outstanding_response = None
 
     def _connect(self):
-        import time
-        import os
         if self.conn is None:
             self.conn = http.client.HTTPConnection(
                 self.host, self.port, timeout=self.conn_timeout
             )
             self._current_endpoint = self.host
-
-            # Debug logging (enable with S3LIB_DEBUG=1)
-            if os.environ.get('S3LIB_DEBUG'):
-                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                print(f"[{timestamp}] DEBUG: Created HTTPConnection to {self.host}:{self.port} (socket connects on first request)", file=sys.stderr)
+            # Don't log here - socket doesn't exist yet. Log in _s3_request_inner after first request.
         else:
             assert self._current_endpoint is not None
 
