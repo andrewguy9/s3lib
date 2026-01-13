@@ -105,20 +105,30 @@ def test_disconnect_safety():
     assert conn._outstanding_response is None
 
 def test_connection_reset_recovery():
-    """Test that connection errors are handled gracefully and connection is reset."""
+    """Test that connection errors are handled gracefully with automatic retry."""
     import unittest.mock as mock
 
     conn = s3lib.Connection("someaccess", b"somesecret")
-    conn._connect()
 
-    # Mock the underlying HTTP connection to simulate a connection reset
-    mock_http_conn = mock.Mock()
-    mock_http_conn.request.side_effect = ConnectionResetError("Connection reset by peer")
-    conn.conn = mock_http_conn
+    # Mock _connect to always set up a failing connection
+    original_connect = conn._connect
+    call_count = [0]
 
-    # Try to make a request - should clean up and re-raise
+    def mock_connect():
+        call_count[0] += 1
+        mock_http_conn = mock.Mock()
+        mock_http_conn.request.side_effect = ConnectionResetError("Connection reset by peer")
+        conn.conn = mock_http_conn
+        conn._current_endpoint = conn.host
+
+    conn._connect = mock_connect
+
+    # Try to make a request - should retry and then re-raise after exhausting retries
     with pytest.raises(ConnectionResetError):
         conn._s3_request("GET", "bucket", "key", {}, {}, '')
+
+    # Should have tried 3 times (initial + 2 retries)
+    assert call_count[0] == 3
 
     # Connection should have been cleaned up
     assert conn.conn is None

@@ -493,19 +493,41 @@ class Connection:
         if bucket and bucket in self._bucket_regions:
             self.region = self._bucket_regions[bucket]
 
-        # Try the request, handling redirects for region discovery
+        # Try the request, handling redirects for region discovery and connection errors
         max_redirects = 2
+        max_retries = 3  # Retry on connection errors
+        last_error = None
+
         for attempt in range(max_redirects):
-            resp = self._s3_request_inner(
-                method,
-                bucket,
-                key,
-                args,
-                headers.copy(),
-                content,
-                sha256_hint=sha256_hint,
-                md5_hint=md5_hint,
-            )
+            for retry in range(max_retries):
+                try:
+                    # Ensure connection is established before attempting request
+                    self._connect()
+
+                    resp = self._s3_request_inner(
+                        method,
+                        bucket,
+                        key,
+                        args,
+                        headers.copy(),
+                        content,
+                        sha256_hint=sha256_hint,
+                        md5_hint=md5_hint,
+                    )
+                    break  # Success, exit retry loop
+                except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError) as e:
+                    last_error = e
+                    # _s3_request_inner already called _disconnect(), so next attempt will reconnect
+                    if retry == max_retries - 1:
+                        # Exhausted retries, re-raise the error
+                        raise
+                    # Otherwise, retry the request
+                    continue
+
+            # If we got here, we either succeeded or re-raised, so we have a response
+            if last_error and retry < max_retries - 1:
+                # Reset error flag since we recovered
+                last_error = None
 
             # Check for redirect responses (301 or 307)
             if resp.status in (301, 307):
@@ -520,9 +542,8 @@ class Connection:
                     # Cache the discovered region for this bucket
                     self._bucket_regions[bucket] = discovered_region
                     self.region = discovered_region
-                    # Clear the current endpoint so we reconnect with the new region
-                    if hasattr(self, "_current_endpoint"):
-                        delattr(self, "_current_endpoint")
+                    # Disconnect so we reconnect with the new region
+                    self._disconnect()
                     # Retry the request with the correct region
                     continue
 
@@ -710,7 +731,7 @@ class Connection:
             )
             self._current_endpoint = self.host
         else:
-            assert self._curent_endpoint is not None
+            assert self._current_endpoint is not None
 
     def _disconnect(self):
         if self.conn is not None:
