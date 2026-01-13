@@ -52,6 +52,8 @@ class Connection:
         self._outstanding_response = None
         # Default region: env var > us-east-1 (matches boto3 behavior)
         self.region = region or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+        # Track socket identity even after socket closes
+        self._socket_identity = None  # Will be set to "fd=X local_port=Y" when connected
 
     def __enter__(self):
         self._connect()
@@ -693,7 +695,13 @@ class Connection:
                     remote_addr = self.conn.sock.getpeername()
                     return f"fd={fd} local_port={local_port} remote={remote_addr}"
                 except Exception as e:
+                    # Socket is broken, use cached identity if available
+                    if self._socket_identity:
+                        return f"{self._socket_identity} (disconnected: {type(e).__name__})"
                     return f"error: {e}"
+            # Socket doesn't exist, check if we had one before
+            if self._socket_identity:
+                return f"{self._socket_identity} (closed)"
             return "not connected"
 
         # Debug logging (enable with S3LIB_DEBUG=1)
@@ -808,6 +816,14 @@ class Connection:
             # This prevents issues where HTTPConnection defers connection
             try:
                 self.conn.connect()
+                # Capture socket identity now while it's valid
+                if hasattr(self.conn, 'sock') and self.conn.sock is not None:
+                    try:
+                        fd = self.conn.sock.fileno()
+                        local_port = self.conn.sock.getsockname()[1]
+                        self._socket_identity = f"fd={fd} local_port={local_port}"
+                    except Exception:
+                        self._socket_identity = "connected (info unavailable)"
             except Exception as e:
                 # Connection failed, clean up
                 import os
@@ -816,6 +832,7 @@ class Connection:
                     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
                     print(f"[{timestamp}] DEBUG: conn.connect() failed: {type(e).__name__}: {e}", file=sys.stderr)
                 self.conn = None
+                self._socket_identity = None
                 raise
         else:
             assert self._current_endpoint is not None
@@ -850,6 +867,7 @@ class Connection:
                 pass
             self.conn = None
         self._outstanding_response = None
+        self._socket_identity = None  # Clear cached identity
 
 
 def sign(secret, string_to_sign):
