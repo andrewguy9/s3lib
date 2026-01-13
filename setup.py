@@ -4,7 +4,7 @@ from setuptools import setup
 from setuptools.command.test import test as TestCommand
 
 requires =  ['safeoutput>=2.0', 'future', 'docopt']
-test_requires = ['tox', 'pytest==7.2.2']
+test_requires = ['tox', 'pytest==7.2.2', 'pytest-timeout']
 
 setup(
     name='S3Lib',
@@ -14,6 +14,9 @@ setup(
     packages=['s3lib'],
     install_requires = requires,
     tests_require = test_requires,
+    extras_require = {
+        'test': test_requires,
+    },
     entry_points = {
       'console_scripts': [
         's3ls   = s3lib.ui:ls_main',
