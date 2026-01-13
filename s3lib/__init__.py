@@ -515,9 +515,10 @@ class Connection:
                         md5_hint=md5_hint,
                     )
                     break  # Success, exit retry loop
-                except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError) as e:
+                except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, ValueError) as e:
                     last_error = e
-                    # _s3_request_inner already called _disconnect(), so next attempt will reconnect
+                    # Connection may be in bad state, disconnect before retry
+                    self._disconnect()
                     if retry == max_retries - 1:
                         # Exhausted retries, re-raise the error
                         raise
@@ -697,6 +698,10 @@ class Connection:
             # Connection is broken, clean it up so next call will reconnect
             self._disconnect()
             raise  # Re-raise for caller to handle/retry
+        except Exception:
+            # For any other exception, also disconnect to ensure clean state
+            self._disconnect()
+            raise
 
         # Track this response so we can validate it's consumed before the next request
         self._outstanding_response = resp
