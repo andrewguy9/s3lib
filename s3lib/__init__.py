@@ -729,6 +729,10 @@ class Connection:
             request_call_duration = time.time() - request_call_start
 
             if debug_enabled:
+                # Check socket status AFTER conn.request() to see if it connected
+                sock_after_request = get_sock_info()
+                if sock_after_request == "not connected":
+                    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] WARNING: Socket still not connected after conn.request()!", file=sys.stderr)
                 if request_call_duration > 1.0:
                     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] WARNING: conn.request() took {request_call_duration:.2f}s", file=sys.stderr)
 
@@ -800,7 +804,19 @@ class Connection:
                 self.host, self.port, timeout=self.conn_timeout
             )
             self._current_endpoint = self.host
-            # Don't log here - socket doesn't exist yet. Log in _s3_request_inner after first request.
+            # Explicitly connect to force socket creation
+            # This prevents issues where HTTPConnection defers connection
+            try:
+                self.conn.connect()
+            except Exception as e:
+                # Connection failed, clean up
+                import os
+                if os.environ.get('S3LIB_DEBUG'):
+                    import time
+                    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                    print(f"[{timestamp}] DEBUG: conn.connect() failed: {type(e).__name__}: {e}", file=sys.stderr)
+                self.conn = None
+                raise
         else:
             assert self._current_endpoint is not None
 
