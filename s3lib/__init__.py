@@ -678,16 +678,76 @@ class Connection:
 
         if self.conn is None:
             raise RuntimeError("Attempted to make request without opening connection.")
+
         # Make the HTTP request
+        import time
+        import os
+        request_start = time.time()
+
+        # Debug logging (enable with S3LIB_DEBUG=1)
+        if os.environ.get('S3LIB_DEBUG'):
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+
+            # Get socket identity for this request
+            sock_info = "not connected"
+            if hasattr(self.conn, 'sock') and self.conn.sock is not None:
+                try:
+                    fd = self.conn.sock.fileno()
+                    local_port = self.conn.sock.getsockname()[1]
+                    remote_addr = self.conn.sock.getpeername()
+                    sock_info = f"fd={fd} local_port={local_port} remote={remote_addr}"
+                except Exception as e:
+                    sock_info = f"error: {e}"
+
+            # Log content info
+            content_info = "empty"
+            if content:
+                if hasattr(content, 'fileno'):
+                    try:
+                        filestat = os.fstat(content.fileno())
+                        content_info = f"file ({filestat.st_size} bytes)"
+                    except:
+                        content_info = "file (size unknown)"
+                elif isinstance(content, bytes):
+                    content_info = f"bytes ({len(content)} bytes)"
+                elif isinstance(content, str):
+                    content_info = f"string ({len(content)} chars)"
+
+            print(f"[{timestamp}] DEBUG: Starting {method} request to {resource}, content: {content_info}, socket: {sock_info}", file=sys.stderr)
+
         try:
+            request_call_start = time.time()
             if sys.version_info >= (3, 0):
                 self.conn.request(
                     method, resource, content, headers, encode_chunked=False
                 )
             else:
                 self.conn.request(method, resource, content, headers)
+            request_call_duration = time.time() - request_call_start
 
+            if os.environ.get('S3LIB_DEBUG'):
+                if request_call_duration > 1.0:
+                    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] WARNING: conn.request() took {request_call_duration:.2f}s", file=sys.stderr)
+
+            getresponse_start = time.time()
             resp = self.conn.getresponse()
+            getresponse_duration = time.time() - getresponse_start
+
+            if os.environ.get('S3LIB_DEBUG'):
+                total_duration = time.time() - request_start
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+
+                # Get socket identity after response (may have changed if first request)
+                sock_info_after = "unknown"
+                if hasattr(self.conn, 'sock') and self.conn.sock is not None:
+                    try:
+                        fd = self.conn.sock.fileno()
+                        local_port = self.conn.sock.getsockname()[1]
+                        sock_info_after = f"fd={fd} local_port={local_port}"
+                    except Exception:
+                        sock_info_after = "error"
+
+                print(f"[{timestamp}] DEBUG: Request completed in {total_duration:.2f}s (request: {request_call_duration:.2f}s, getresponse: {getresponse_duration:.2f}s), status: {resp.status}, socket: {sock_info_after}", file=sys.stderr)
         except (
             ConnectionResetError,
             BrokenPipeError,
@@ -730,16 +790,41 @@ class Connection:
             self._outstanding_response = None
 
     def _connect(self):
+        import time
+        import os
         if self.conn is None:
             self.conn = http.client.HTTPConnection(
                 self.host, self.port, timeout=self.conn_timeout
             )
             self._current_endpoint = self.host
+
+            # Debug logging (enable with S3LIB_DEBUG=1)
+            if os.environ.get('S3LIB_DEBUG'):
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                print(f"[{timestamp}] DEBUG: Created HTTPConnection to {self.host}:{self.port} (socket connects on first request)", file=sys.stderr)
         else:
             assert self._current_endpoint is not None
 
     def _disconnect(self):
+        import time
+        import os
         if self.conn is not None:
+            # Debug logging (enable with S3LIB_DEBUG=1)
+            if os.environ.get('S3LIB_DEBUG'):
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                endpoint = self._current_endpoint if hasattr(self, '_current_endpoint') else 'unknown'
+
+                # Get socket identity before closing
+                if hasattr(self.conn, 'sock') and self.conn.sock is not None:
+                    try:
+                        fd = self.conn.sock.fileno()
+                        local_port = self.conn.sock.getsockname()[1]
+                        print(f"[{timestamp}] DEBUG: Closing connection to {endpoint} - fd={fd} local_port={local_port}", file=sys.stderr)
+                    except Exception as e:
+                        print(f"[{timestamp}] DEBUG: Closing connection to {endpoint} (socket info: {e})", file=sys.stderr)
+                else:
+                    print(f"[{timestamp}] DEBUG: Closing connection to {endpoint} (socket already closed)", file=sys.stderr)
+
             try:
                 self.conn.close()
             except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
