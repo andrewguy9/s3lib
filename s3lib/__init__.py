@@ -733,11 +733,27 @@ class Connection:
             if hasattr(content, 'tell'):
                 try:
                     file_pos_before = content.tell()
-                    print(f"[{timestamp}] DEBUG: File position before request: {file_pos_before}", file=sys.stderr)
+                    file_id = id(content)  # Python object ID
+                    print(f"[{timestamp}] DEBUG: File object id={file_id}, position before request: {file_pos_before}", file=sys.stderr)
                 except:
                     pass
 
         try:
+            # Seek file-like objects back to the beginning for retry safety.
+            # This handles the case where s3lib's internal retry loop (for connection errors)
+            # is retrying with a file handle that was partially/fully consumed by a previous attempt.
+            # Note: For non-seekable streams (pipes), caller should handle retries by providing
+            # fresh file handles (e.g., farmfs's retryFdIo2 calls getSrcHandle() for each retry).
+            if hasattr(content, 'seek') and hasattr(content, 'tell'):
+                try:
+                    current_pos = content.tell()
+                    if current_pos != 0:
+                        if debug_enabled:
+                            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] DEBUG: File was at position {current_pos}, seeking back to 0", file=sys.stderr)
+                        content.seek(0)
+                except:
+                    pass  # If seek fails (non-seekable stream), proceed anyway
+
             request_call_start = time.time()
             if sys.version_info >= (3, 0):
                 self.conn.request(
