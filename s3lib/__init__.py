@@ -726,6 +726,7 @@ class Connection:
                     content_info = f"string ({len(content)} chars)"
 
             print(f"[{timestamp}] DEBUG: Starting {method} request to {resource}, content: {content_info}, socket: {sock_info}", file=sys.stderr)
+            print(f"[{timestamp}] DEBUG: Request headers: {dict(headers)}", file=sys.stderr)
 
         try:
             request_call_start = time.time()
