@@ -54,6 +54,14 @@ Shows exception type and socket identity when requests fail, helping correlate e
 DEBUG: retryFdIo2 attempt 2/3 failed with ValueError: RequestTimeout...
 ```
 
+### Server Requested Close
+```
+[2026-01-13 10:15:46] DEBUG: Server sent 'Connection: close', will disconnect after response consumed
+[2026-01-13 10:15:46] DEBUG: Disconnecting as requested by server in previous response
+```
+
+When S3 sends `Connection: close` header (often with error responses), the connection will be closed after the response is fully read.
+
 ### Connection Close
 ```
 [2026-01-13 10:15:46] DEBUG: Closing connection to s3.amazonaws.com - fd=8 local_port=51234

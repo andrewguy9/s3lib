@@ -50,6 +50,7 @@ class Connection:
         self.conn_timeout = conn_timeout
         self.conn = None
         self._outstanding_response = None
+        self._server_requested_close = False
         # Default region: env var > us-east-1 (matches boto3 behavior)
         self.region = region or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
         # Track socket identity even after socket closes
@@ -780,6 +781,18 @@ class Connection:
             self._disconnect()
             raise
 
+        # Check if server wants us to close the connection
+        connection_header = resp.getheader('Connection', '').lower()
+        if connection_header == 'close':
+            if debug_enabled:
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                print(f"[{timestamp}] DEBUG: Server sent 'Connection: close', will disconnect after response consumed", file=sys.stderr)
+            # Mark that we need to disconnect after consuming this response
+            # We can't disconnect now because caller needs to read the response body
+            self._server_requested_close = True
+        else:
+            self._server_requested_close = False
+
         # Track this response so we can validate it's consumed before the next request
         self._outstanding_response = resp
 
@@ -805,6 +818,16 @@ class Connection:
                     "Call response.read() to consume the data."
                 )
             self._outstanding_response = None
+
+            # If server requested close on the last response, disconnect now
+            if self._server_requested_close:
+                import os
+                if os.environ.get('S3LIB_DEBUG'):
+                    import time
+                    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                    print(f"[{timestamp}] DEBUG: Disconnecting as requested by server in previous response", file=sys.stderr)
+                self._disconnect()
+                self._server_requested_close = False
 
     def _connect(self):
         if self.conn is None:
@@ -868,6 +891,7 @@ class Connection:
             self.conn = None
         self._outstanding_response = None
         self._socket_identity = None  # Clear cached identity
+        self._server_requested_close = False  # Reset flag
 
 
 def sign(secret, string_to_sign):
