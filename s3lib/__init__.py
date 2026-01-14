@@ -728,6 +728,15 @@ class Connection:
             print(f"[{timestamp}] DEBUG: Starting {method} request to {resource}, content: {content_info}, socket: {sock_info}", file=sys.stderr)
             print(f"[{timestamp}] DEBUG: Request headers: {dict(headers)}", file=sys.stderr)
 
+            # Log file position before request if it's a file
+            file_pos_before = None
+            if hasattr(content, 'tell'):
+                try:
+                    file_pos_before = content.tell()
+                    print(f"[{timestamp}] DEBUG: File position before request: {file_pos_before}", file=sys.stderr)
+                except:
+                    pass
+
         try:
             request_call_start = time.time()
             if sys.version_info >= (3, 0):
@@ -737,6 +746,14 @@ class Connection:
             else:
                 self.conn.request(method, resource, content, headers)
             request_call_duration = time.time() - request_call_start
+
+            # Log file position after request
+            if debug_enabled and file_pos_before is not None and hasattr(content, 'tell'):
+                try:
+                    file_pos_after = content.tell()
+                    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] DEBUG: File position after request: {file_pos_after} (read {file_pos_after - file_pos_before} bytes)", file=sys.stderr)
+                except:
+                    pass
 
             if debug_enabled:
                 # Check socket status AFTER conn.request() to see if it connected
