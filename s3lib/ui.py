@@ -9,7 +9,7 @@ from os import PathLike, environ
 from os.path import expanduser
 from safeoutput import open as safeopen
 import sys
-from typing import BinaryIO, Tuple
+from typing import BinaryIO, Tuple, cast
 
 def load_creds_from_file(path: PathLike) -> Tuple[str, bytes]:
   with open(path, "r") as f:
@@ -78,10 +78,7 @@ def ls_main(argv=None) -> None:
       bucket = args.get('<bucket>')
       if bucket:
         objs = s3.list_bucket2(bucket, start=args.get('--mark'), prefix=args.get('--prefix'), batch_size=args.get('--batch'))
-        if args.get('--fields'):
-            fields = args.get('<field>')
-        else:
-            fields = [LIST_BUCKET_KEY]
+        fields = args.get('<field>') or [LIST_BUCKET_KEY]
         for obj in objs:
           # Use empty string for missing fields (e.g., checksums not present)
           selected = [obj.get(field) or '' for field in fields]
@@ -200,11 +197,10 @@ def get_main(argv=None) -> None:
       print(f"HTTP {response.status}", file=sys.stderr)
       sys.exit(1)
 
-    # TODO we have a type error here because sys.stdout.buffer is TextIO or Any, not TextIO or BinaryIO.
     # Download and verify
     if file_path is None:
       # Write to stdout - don't close it
-      outfile = sys.stdout.buffer if hasattr(sys.stdout, 'buffer') else sys.stdout
+      outfile = cast(BinaryIO, sys.stdout.buffer if hasattr(sys.stdout, 'buffer') else sys.stdout)
       verified_copy(response, outfile, verify=verify)
     else:
       # Write to file
@@ -228,7 +224,7 @@ def cp_main(argv=None) -> None:
   (access_id, secret_key) = load_creds(args.get('--creds'))
   with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
     headers = {}
-    for header in args.get('--header'):
+    for header in args.get('--header', []):
       try:
         (key, value) = header.split(':', 1)
         headers[key] = value
@@ -256,7 +252,7 @@ def head_main(argv=None) -> None:
   args = docopt(HEAD_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
   with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
-    for obj in args.get('<object>'):
+    for obj in args.get('<object>', []):
       headers = s3.head_object(args.get('<bucket>'), obj)
       if args.get('--json'):
         print(dumps({"object":obj, "headers":dict(headers)}))
@@ -279,10 +275,9 @@ Options:
     --if-match=<etag>   Only upload if current ETag matches (optimistic locking)
 """
 
-# TODO we have a type error here. sys.stdin is TextIO or Any.
 def get_input_fd(path: PathLike | None) -> BinaryIO:
     if path is None:
-        return sys.stdin
+        return cast(BinaryIO, sys.stdin.buffer if hasattr(sys.stdin, 'buffer') else sys.stdin)
     else:
         return open(path, 'rb')
 
@@ -290,7 +285,7 @@ def put_main(argv=None) -> None:
   args = docopt(PUT_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
   headers = {}
-  for header in args.get('--header'):
+  for header in args.get('--header', []):
     try:
       (key, value) = header.split(':', 1)
       headers[key] = value
@@ -365,7 +360,9 @@ def rm_main(argv=None) -> None:
   args = docopt(RM_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
   with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
-    for (key, result) in s3.delete_objects(args.get('<bucket>'), args.get('<object>'), int(args.get('--batch')), not args.get('--verbose')):
+    batch_size_str = args.get('--batch')
+    assert batch_size_str is not None # docopt provides default string.
+    for (key, result) in s3.delete_objects(args.get('<bucket>'), args.get('<object>'), int(batch_size_str), not args.get('--verbose')):
       print(key, result)
 
 SIGN_USAGE = """
@@ -381,7 +378,9 @@ Options:
 def sign_main(argv=None) -> None:
   args = docopt(SIGN_USAGE, argv)
   (_, secret_key) = load_creds(args.get('--creds'))
-  with open(args.get('<file>'), 'rb') as f:
+  file_path = args.get('<file>')
+  assert file_path is not None  # docopt ensures required arg
+  with open(file_path, 'rb') as f:
     policy_document = f.read()
   policy = b64encode(policy_document)
   signature = sign(secret_key, policy)
