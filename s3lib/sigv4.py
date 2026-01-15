@@ -16,12 +16,19 @@ References:
 - Signing Key: https://docs.aws.amazon.com/general/latest/gr/sigv4-calculate-signature.html
 """
 
-from hmac import new as hmac_new
 from hashlib import sha256
+from hmac import new as hmac_new
 from urllib.parse import quote
+import time
+from typing import Tuple
 
 
-def create_canonical_request(method, uri, query_string, headers, payload_hash):
+def create_canonical_request(
+        method: str,
+        uri: str,
+        query_string: str,
+        headers: dict[str, str],
+        payload_hash: str) -> Tuple[str, str]:
     """
     Create a canonical request string for AWS Signature Version 4.
 
@@ -82,7 +89,7 @@ def create_canonical_request(method, uri, query_string, headers, payload_hash):
     return canonical_request, signed_headers
 
 
-def _create_canonical_uri(uri):
+def _create_canonical_uri(uri: str) -> str:
     """
     Create the canonical URI by URI-encoding each path segment.
 
@@ -110,7 +117,12 @@ def _create_canonical_uri(uri):
     return canonical_uri
 
 
-def create_string_to_sign(canonical_request, timestamp, date, region, service):
+def create_string_to_sign(
+        canonical_request: str,
+        timestamp: str,
+        date: str,
+        region: str,
+        service: str) -> str:
     """
     Create the string to sign for AWS Signature Version 4.
 
@@ -147,7 +159,7 @@ def create_string_to_sign(canonical_request, timestamp, date, region, service):
     return string_to_sign
 
 
-def derive_signing_key(secret_key, date, region, service):
+def derive_signing_key(secret_key: bytes, date: str, region: str, service: str) -> bytes:
     """
     Derive the signing key for AWS Signature Version 4.
 
@@ -179,7 +191,7 @@ def derive_signing_key(secret_key, date, region, service):
     return k_signing
 
 
-def calculate_signature(signing_key, string_to_sign):
+def calculate_signature(signing_key: bytes, string_to_sign: str) -> str:
     """
     Calculate the final signature using the signing key and string to sign.
 
@@ -203,8 +215,17 @@ def calculate_signature(signing_key, string_to_sign):
     return signature_bytes.hex()
 
 
-def sign_request_v4(method, uri, query_string, headers, payload_hash,
-                    access_key_id, secret_key, region, service, timestamp):
+def sign_request_v4(
+        method: str,
+        uri: str,
+        query_string: str,
+        headers: dict[str, str],
+        payload_hash: str,
+        access_key_id: str,
+        secret_key,
+        region: str,
+        service: str,
+        timestamp: str) -> str:
     """
     Complete AWS Signature Version 4 signing process.
 
@@ -257,7 +278,7 @@ def sign_request_v4(method, uri, query_string, headers, payload_hash,
     return authorization_header
 
 
-def hash_payload(payload):
+def hash_payload(payload: bytes| str) -> str:
     """
     Calculate the SHA256 hash of a payload.
 
@@ -272,18 +293,17 @@ def hash_payload(payload):
     return sha256(payload).hexdigest()
 
 
-def get_timestamp():
+def get_timestamp() -> str:
     """
     Get current UTC timestamp in ISO 8601 format (YYYYMMDDTHHMMSSZ).
 
     Returns:
         str: Current timestamp
     """
-    import time
     return time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
 
 
-def get_date():
+def get_date() -> str:
     """
     Get current UTC date in YYYYMMDD format.
 
