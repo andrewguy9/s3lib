@@ -28,12 +28,14 @@ S3Lib supports multiple authentication methods (in order of precedence):
 ### Credentials File Format
 
 Create a file at `~/.s3` (or any path you specify) with:
+
 ```
 <AWS_ACCESS_KEY_ID>
 <AWS_SECRET_ACCESS_KEY>
 ```
 
 Example:
+
 ```
 AKIAIOSFODNN7EXAMPLE
 wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
@@ -44,21 +46,25 @@ wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 ### s3ls - List buckets or objects
 
 List all buckets:
+
 ```bash
 s3ls
 ```
 
 List objects in a bucket:
+
 ```bash
 s3ls mybucket
 ```
 
 List with prefix filter:
+
 ```bash
 s3ls mybucket --prefix logs/2024/
 ```
 
 List with custom fields:
+
 ```bash
 s3ls mybucket --fields Key Size LastModified
 ```
@@ -66,6 +72,7 @@ s3ls mybucket --fields Key Size LastModified
 Available fields: Key, LastModified, ETag, Size, StorageClass
 
 Options:
+
 - `--host HOST` - Custom S3 endpoint hostname
 - `--port PORT` - Custom port
 - `--output FILE` - Write output to file
@@ -77,21 +84,25 @@ Options:
 ### s3get - Download objects
 
 Download an object:
+
 ```bash
 s3get mybucket myfile.txt --output local-file.txt
 ```
 
 Download to stdout:
+
 ```bash
 s3get mybucket logs/app.log | grep ERROR
 ```
 
 Download multiple objects:
+
 ```bash
 s3get mybucket file1.txt file2.txt --output combined.txt
 ```
 
 Options:
+
 - `--host HOST` - Custom S3 endpoint hostname
 - `--port PORT` - Custom port
 - `--output FILE` - Write output to file (default: stdout)
@@ -100,21 +111,25 @@ Options:
 ### s3put - Upload objects
 
 Upload a file:
+
 ```bash
 s3put mybucket remote-file.txt local-file.txt
 ```
 
 Upload from stdin:
+
 ```bash
 echo "Hello World" | s3put mybucket hello.txt
 ```
 
 Upload with custom headers:
+
 ```bash
 s3put mybucket file.txt local.txt --header "Content-Type:text/plain" --header "Cache-Control:max-age=3600"
 ```
 
 Options:
+
 - `--host HOST` - Custom S3 endpoint hostname
 - `--port PORT` - Custom port
 - `--creds FILE` - Path to credentials file
@@ -123,16 +138,19 @@ Options:
 ### s3head - Get object metadata
 
 Get metadata for objects:
+
 ```bash
 s3head mybucket file1.txt file2.txt
 ```
 
 Get metadata in JSON format:
+
 ```bash
 s3head mybucket file.txt --json
 ```
 
 Options:
+
 - `--host HOST` - Custom S3 endpoint hostname
 - `--port PORT` - Custom port
 - `--creds FILE` - Path to credentials file
@@ -141,16 +159,19 @@ Options:
 ### s3cp - Copy objects
 
 Copy object within or between buckets:
+
 ```bash
 s3cp source-bucket source-key dest-bucket dest-key
 ```
 
 Copy with custom metadata:
+
 ```bash
 s3cp mybucket old.txt mybucket new.txt --header "Content-Type:application/json"
 ```
 
 Options:
+
 - `--host HOST` - Custom S3 endpoint hostname
 - `--port PORT` - Custom port
 - `--creds FILE` - Path to credentials file
@@ -159,21 +180,25 @@ Options:
 ### s3rm - Delete objects
 
 Delete objects:
+
 ```bash
 s3rm mybucket file1.txt file2.txt
 ```
 
 Delete with verbose output:
+
 ```bash
 s3rm mybucket file.txt --verbose
 ```
 
 Batch delete with custom batch size:
+
 ```bash
 s3rm mybucket file*.txt --batch 100
 ```
 
 Options:
+
 - `--host HOST` - Custom S3 endpoint hostname
 - `--port PORT` - Custom port
 - `--creds FILE` - Path to credentials file
@@ -183,6 +208,7 @@ Options:
 ### s3sign - Sign S3 forms
 
 Sign a policy document for browser-based uploads:
+
 ```bash
 s3sign policy.json
 ```
@@ -190,6 +216,7 @@ s3sign policy.json
 This outputs the base64-encoded policy and signature.
 
 Options:
+
 - `--creds FILE` - Path to credentials file
 
 ## Python Library API
@@ -309,4 +336,4 @@ MIT License - See setup.py for details.
 
 ## Author
 
-Andrew Thomson (athomsonguy@gmail.com)
+Andrew Thomson (<athomsonguy@gmail.com>)
