@@ -16,7 +16,7 @@ References:
 - Signing Key: https://docs.aws.amazon.com/general/latest/gr/sigv4-calculate-signature.html
 """
 
-import hmac
+from hmac import new as hmac_new
 from hashlib import sha256
 from urllib.parse import quote
 
@@ -168,7 +168,7 @@ def derive_signing_key(secret_key, date, region, service):
     """
     def _sign(key, msg):
         """Helper to create HMAC-SHA256."""
-        return hmac.new(key, msg.encode('utf-8'), sha256).digest()
+        return hmac_new(key, msg.encode('utf-8'), sha256).digest()
 
     # Chain of HMAC operations to derive the signing key
     k_date = _sign(b'AWS4' + secret_key, date)
@@ -194,7 +194,7 @@ def calculate_signature(signing_key, string_to_sign):
     Returns:
         str: The signature as a lowercase hexadecimal string
     """
-    signature_bytes = hmac.new(
+    signature_bytes = hmac_new(
         signing_key,
         string_to_sign.encode('utf-8'),
         sha256

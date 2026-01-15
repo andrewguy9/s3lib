@@ -1,38 +1,31 @@
-import hmac
-from hashlib import sha1
+from binascii import b2a_base64
 from hashlib import md5
-import binascii
-import http.client
-import logging
-import time
+from hashlib import sha1
+from hmac import new as hmac_new
+from http.client import HTTPConnection, HTTPException, NO_CONTENT, OK
+from logging import basicConfig as logging_basicConfig, DEBUG, getLogger
+from .utils import batchify, raise_http_resp_error, get_string_to_sign
+from .sigv4 import sign_request_v4, hash_payload, get_timestamp
+from os import environ, fstat
+from urllib.parse import quote
+from stat import S_ISREG, ST_SIZE
+from sys import stderr
+from time import gmtime, strftime, time
 from xml.etree.ElementTree import fromstring as parse
 from xml.etree.ElementTree import Element, SubElement, tostring
-from .utils import (
-    split_headers,
-    split_args,
-    batchify,
-    take,
-    get_string_to_sign,
-    raise_http_resp_error,
-)
-from .sigv4 import sign_request_v4, hash_payload, get_timestamp
-from urllib.parse import quote
-import sys
-import stat
-import os
 
 # Configure module-level logger
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 # Enable debug logging via S3LIB_DEBUG environment variable
-if os.environ.get('S3LIB_DEBUG'):
-    logging.basicConfig(
-        level=logging.DEBUG,
+if environ.get('S3LIB_DEBUG'):
+    logging_basicConfig(
+        level=DEBUG,
         format='[%(asctime)s] %(levelname)s: %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
-        stream=sys.stderr
+        stream=stderr
     )
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(DEBUG)
 
 
 class ConnectionLifecycleError(Exception):
@@ -66,7 +59,7 @@ class Connection:
         self._outstanding_response = None
         self._server_requested_close = False
         # Default region: env var > us-east-1 (matches boto3 behavior)
-        self.region = region or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+        self.region = region or environ.get("AWS_DEFAULT_REGION") or "us-east-1"
         # Track socket identity even after socket closes
         self._socket_identity = None  # Will be set to "fd=X local_port=Y" when connected
 
@@ -271,7 +264,7 @@ class Connection:
             if checksum_algorithm == "SHA256" and sha256_hint is not None:
                 # We have the digest as bytes, convert to base64 for checksum header
                 checksum_value = (
-                    binascii.b2a_base64(sha256_hint).strip().decode("ascii")
+                    b2a_base64(sha256_hint).strip().decode("ascii")
                 )
             else:
                 # Need to calculate checksum
@@ -333,7 +326,7 @@ class Connection:
 
     def _s3_get_service_request(self):
         resp = self._s3_request("GET", None, None, {}, {}, "")
-        if resp.status != http.client.OK:
+        if resp.status != OK:
             raise_http_resp_error(resp)
         data = resp.read()  # TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
         self._outstanding_response = None  # Response consumed
@@ -365,7 +358,7 @@ class Connection:
             args["max-keys"] = str(max_keys)
 
         resp = self._s3_request("GET", bucket, None, args, {}, "")
-        if resp.status != http.client.OK:
+        if resp.status != OK:
             raise_http_resp_error(resp)
         data = resp.read()  # TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
         self._outstanding_response = None  # Response consumed
@@ -378,7 +371,7 @@ class Connection:
         headers['x-amz-checksum-mode'] = 'ENABLED'
         resp = self._s3_request("GET", bucket, key, {}, headers, "")
         # Don't raise for conditional response codes (304, 412) - caller handles them
-        if resp.status not in (http.client.OK, 304, 412):
+        if resp.status not in (OK, 304, 412):
             raise_http_resp_error(resp)
         return resp
 
@@ -386,7 +379,7 @@ class Connection:
         # Request checksums in response headers
         headers = {'x-amz-checksum-mode': 'ENABLED'}
         resp = self._s3_request("HEAD", bucket, key, {}, headers, "")
-        if resp.status != http.client.OK:
+        if resp.status != OK:
             raise_http_resp_error(resp)
         resp.read()  # NOTE: Should be zero size response. Required to reset the connection.
         self._outstanding_response = None  # Response consumed
@@ -394,7 +387,7 @@ class Connection:
 
     def _s3_delete_request(self, bucket, key):
         resp = self._s3_request("DELETE", bucket, key, {}, {}, "")
-        if resp.status != http.client.NO_CONTENT:
+        if resp.status != NO_CONTENT:
             raise_http_resp_error(resp)
         resp.read()  # NOTE: Should be zero size response. Required to reset the connection
         self._outstanding_response = None  # Response consumed
@@ -403,7 +396,7 @@ class Connection:
     def _s3_delete_bulk_request(self, bucket, keys, quiet):
         content = _render_delete_bulk_content(keys, quiet)
         resp = self._s3_request("POST", bucket, None, {"delete": None}, {}, content)
-        if resp.status != http.client.OK:
+        if resp.status != OK:
             raise_http_resp_error(resp)
         results = resp.read()  # TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
         self._outstanding_response = None  # Response consumed
@@ -413,7 +406,7 @@ class Connection:
         headers["x-amz-copy-source"] = "/%s/%s" % (src_bucket, src_key)
         headers["x-amz-metadata-directive"] = "REPLACE"
         resp = self._s3_request("PUT", dst_bucket, dst_key, {}, headers, "")
-        if resp.status != http.client.OK:
+        if resp.status != OK:
             raise_http_resp_error(resp)
         return (resp.status, resp.getheaders())
 
@@ -438,10 +431,10 @@ class Connection:
             content_length = len(data)
         elif hasattr(data, "fileno"):
             fileno = data.fileno()
-            filestat = os.fstat(fileno)
-            if stat.S_ISREG(filestat.st_mode):
+            filestat = fstat(fileno)
+            if S_ISREG(filestat.st_mode):
                 # Regular file
-                content_length = filestat[stat.ST_SIZE]
+                content_length = filestat[ST_SIZE]
             else:
                 # Special file, size won't be valid. Lets read the data to get value.
                 # We have to encode to utf-8 for later hashing.
@@ -465,7 +458,7 @@ class Connection:
             sha256_hint=sha256_hint,
             md5_hint=md5_hint,
         )
-        if resp.status != http.client.OK:
+        if resp.status != OK:
             raise_http_resp_error(resp)
         resp.read()  # NOTE: Should be zero length response. Required to reset the connection.
         self._outstanding_response = None  # Response consumed
@@ -501,7 +494,7 @@ class Connection:
         # Validate that previous response was consumed before making a new request
         self._validate_connection_ready()
 
-        http_now = time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime())
+        http_now = strftime("%a, %d %b %Y %H:%M:%S +0000", gmtime())
         # Initialize bucket region cache if not present
         if not hasattr(self, "_bucket_regions"):
             self._bucket_regions = {}
@@ -613,7 +606,7 @@ class Connection:
                 ):
                     if hasattr(self, "conn"):
                         self._disconnect()
-                    self.conn = http.client.HTTPConnection(
+                    self.conn = HTTPConnection(
                         host, self.port, timeout=self.conn_timeout
                     )
                     self._current_endpoint = host
@@ -669,7 +662,7 @@ class Connection:
         if md5_hint is not None:
             # Use provided pre-calculated MD5 digest (bytes)
             # Convert to base64 for Content-MD5 header
-            content_md5 = binascii.b2a_base64(md5_hint).strip().decode("ascii")
+            content_md5 = b2a_base64(md5_hint).strip().decode("ascii")
             headers["Content-MD5"] = content_md5
         else:
             # Try to auto-calculate if content can be signed
@@ -697,7 +690,7 @@ class Connection:
             raise RuntimeError("Attempted to make request without opening connection.")
 
         # Make the HTTP request
-        request_start = time.time()
+        request_start = time()
 
         # Helper to get socket info
         def get_sock_info():
@@ -721,7 +714,7 @@ class Connection:
         file_pos_before = None
 
         # Debug logging
-        if logger.isEnabledFor(logging.DEBUG):
+        if logger.isEnabledFor(DEBUG):
             sock_info = get_sock_info()
 
             # Log content info
@@ -729,7 +722,7 @@ class Connection:
             if content:
                 if hasattr(content, 'fileno'):
                     try:
-                        filestat = os.fstat(content.fileno())
+                        filestat = fstat(content.fileno())
                         content_info = f"file ({filestat.st_size} bytes)"
                     except Exception:
                         content_info = "file (size unknown)"
@@ -765,24 +758,19 @@ class Connection:
                 except Exception:
                     pass  # If seek fails (non-seekable stream), proceed anyway
 
-            request_call_start = time.time()
-            if sys.version_info >= (3, 0):
-                self.conn.request(
-                    method, resource, content, headers, encode_chunked=False
-                )
-            else:
-                self.conn.request(method, resource, content, headers)
-            request_call_duration = time.time() - request_call_start
+            request_call_start = time()
+            self.conn.request(method, resource, content, headers, encode_chunked=False)
+            request_call_duration = time() - request_call_start
 
             # Log file position after request
-            if logger.isEnabledFor(logging.DEBUG) and file_pos_before is not None and hasattr(content, 'tell'):
+            if logger.isEnabledFor(DEBUG) and file_pos_before is not None and hasattr(content, 'tell'):
                 try:
                     file_pos_after = content.tell()
                     logger.debug("File position after request: %s (read %s bytes)", file_pos_after, file_pos_after - file_pos_before)
                 except Exception:
                     pass
 
-            if logger.isEnabledFor(logging.DEBUG):
+            if logger.isEnabledFor(DEBUG):
                 # Check socket status AFTER conn.request() to see if it connected
                 sock_after_request = get_sock_info()
                 if sock_after_request == "not connected":
@@ -790,12 +778,12 @@ class Connection:
                 if request_call_duration > 1.0:
                     logger.warning("conn.request() took %.2fs", request_call_duration)
 
-            getresponse_start = time.time()
+            getresponse_start = time()
             resp = self.conn.getresponse()
-            getresponse_duration = time.time() - getresponse_start
+            getresponse_duration = time() - getresponse_start
 
-            if logger.isEnabledFor(logging.DEBUG):
-                total_duration = time.time() - request_start
+            if logger.isEnabledFor(DEBUG):
+                total_duration = time() - request_start
                 sock_info_after = get_sock_info()
                 logger.debug("Request completed in %.2fs (request: %.2fs, getresponse: %.2fs), status: %s, socket: %s",
                             total_duration, request_call_duration, getresponse_duration, resp.status, sock_info_after)
@@ -804,7 +792,7 @@ class Connection:
             BrokenPipeError,
             ConnectionAbortedError,
             OSError,
-            http.client.HTTPException,
+            HTTPException,
         ) as e:
             # Log socket info before disconnect for debugging
             logger.debug("Request failed with %s: %s, socket: %s", type(e).__name__, e, get_sock_info())
@@ -864,7 +852,7 @@ class Connection:
 
     def _connect(self):
         if self.conn is None:
-            self.conn = http.client.HTTPConnection(
+            self.conn = HTTPConnection(
                 self.host, self.port, timeout=self.conn_timeout
             )
             self._current_endpoint = self.host
@@ -892,7 +880,7 @@ class Connection:
     def _disconnect(self):
         if self.conn is not None:
             # Debug logging
-            if logger.isEnabledFor(logging.DEBUG):
+            if logger.isEnabledFor(DEBUG):
                 endpoint = self._current_endpoint if hasattr(self, '_current_endpoint') else 'unknown'
 
                 # Get socket identity before closing
@@ -926,8 +914,8 @@ def sign(secret, string_to_sign):
     string_to_sign is a str.
     return bytes signature.
     """
-    hashed = hmac.new(secret, string_to_sign, sha1)
-    return binascii.b2a_base64(hashed.digest()).strip()
+    hashed = hmac_new(secret, string_to_sign, sha1)
+    return b2a_base64(hashed.digest()).strip()
 
 
 def sign_content_if_possible(content):
@@ -939,7 +927,7 @@ def sign_content_if_possible(content):
 
 
 def sign_content(content):
-    return binascii.b2a_base64(md5(content).digest()).strip().decode("ascii")
+    return b2a_base64(md5(content).digest()).strip().decode("ascii")
 
 
 ###############################
@@ -981,7 +969,7 @@ def calculate_checksum(content, algorithm):
             f"Unsupported algorithm: {algorithm}. Use SHA256, SHA1, or MD5"
         )
 
-    return binascii.b2a_base64(digest).strip().decode("ascii")
+    return b2a_base64(digest).strip().decode("ascii")
 
 
 def calculate_checksum_if_possible(content, algorithm):
@@ -1019,7 +1007,7 @@ def sha256_hex_to_base64(hex_string):
         # Returns: "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
     """
     digest_bytes = bytes.fromhex(hex_string)
-    return binascii.b2a_base64(digest_bytes).strip().decode("ascii")
+    return b2a_base64(digest_bytes).strip().decode("ascii")
 
 
 #################################
