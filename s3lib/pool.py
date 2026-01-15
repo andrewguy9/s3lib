@@ -242,7 +242,7 @@ class ConnectionPool:
             Any exception from Connection creation or connection
         """
         # Import here to avoid circular dependency
-        from s3lib import Connection
+        from . import Connection
 
         # Create connection with pool's configuration
         conn = Connection(

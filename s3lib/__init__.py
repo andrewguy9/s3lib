@@ -2,8 +2,9 @@ from binascii import b2a_base64
 from hashlib import md5
 from hashlib import sha1
 from hmac import new as hmac_new
-from http.client import HTTPConnection, HTTPException, NO_CONTENT, OK
+from http.client import HTTPConnection, HTTPException, HTTPResponse, NO_CONTENT, OK
 from logging import basicConfig as logging_basicConfig, DEBUG, getLogger
+from typing import Generator, Iterable, List, Tuple
 from .utils import batchify, raise_http_resp_error, get_string_to_sign
 from .sigv4 import sign_request_v4, hash_payload, get_timestamp
 from os import environ, fstat
@@ -30,24 +31,29 @@ if environ.get('S3LIB_DEBUG'):
 
 class ConnectionLifecycleError(Exception):
     """Raised when attempting to reuse a connection with an unconsumed response."""
-
     pass
 
 
 class Connection:
-    ############################
-    # Python special functions #
-    ############################
     def __init__(
-        self, access_id, secret, host=None, port=None, conn_timeout=None, region=None
+        self,
+        access_id: str,
+        secret: bytes,
+        host: str | None =None,
+        port: int | None = None,
+        conn_timeout: float | None = None,
+        region: str | None = None
     ):
         """
-        access_id is str - AWS access key ID
-        secret is bytes - AWS secret access key
-        host is maybe str - S3 endpoint hostname
-        port is maybe int - port number
-        conn_timeout is maybe int seconds - connection timeout
-        region is maybe str - AWS region (defaults to us-east-1 or AWS_DEFAULT_REGION)
+        Initialize a new S3 connection.
+
+        Args:
+            access_id: AWS access key ID
+            secret: AWS secret access key
+            host: S3 endpoint hostname (optional)
+            port: Port number (optional)
+            conn_timeout: Connection timeout in seconds (optional)
+            region: AWS region (optional)
         """
         assert isinstance(secret, bytes)
         self.access_id = access_id
@@ -73,14 +79,18 @@ class Connection:
     #######################
     # Interface Functions #
     #######################
-    def list_buckets(self):
+    def list_buckets(self) -> Generator[str, None, None]:
         """list all buckets in account"""
         xml = self._s3_get_service_request()
         buckets = _parse_get_service_response(xml)
-        for bucket in buckets:
-            yield bucket
+        yield from buckets
 
-    def list_bucket2(self, bucket, start=None, prefix=None, batch_size=None):
+    def list_bucket2(
+            self,
+            bucket: str,
+            start: str | None = None,
+            prefix: str | None = None,
+            batch_size: int | None = None):
         """List contents of individual bucket returning dict of all attributes."""
         continuation_token = None
         more = True
@@ -89,20 +99,30 @@ class Connection:
                 bucket, continuation_token, start, prefix, batch_size
             )
             objects, next_token = _parse_list_response(xml)
-            for object in objects:
-                yield object
+            yield from objects
             # For v2 API, use continuation token from response (not last key)
             continuation_token = next_token
             more = next_token is not None
             # After first request, start parameter is no longer used (v2 uses continuation token)
             start = None
 
-    def list_bucket(self, bucket, start=None, prefix=None, batch_size=None):
+    def list_bucket(
+            self,
+            bucket: str,
+            start: str | None = None,
+            prefix: str | None = None,
+            batch_size: int | None =    None):
         """List contents of individual bucket."""
         for obj in self.list_bucket2(bucket, start, prefix, batch_size):
             yield obj[LIST_BUCKET_KEY]
 
-    def get_object(self, bucket, key, headers=None, if_match=None, if_none_match=None):
+    def get_object(
+            self,
+            bucket: str,
+            key: str,
+            headers: dict[str, str] | None = None,
+            if_match: str | None = None,
+            if_none_match: str | None = None):
         """
         Pull down bucket object by key with optional conditional checks.
 
@@ -157,21 +177,22 @@ class Connection:
         # TODO Want to replace with some enter, exit struct.
         return self._s3_get_request(bucket, key, headers)
 
-    def get_object_url(self, bucket, key, proto="https"):
+    def get_object_url(self, bucket: str, key: str, proto="https") -> str:
         """get a public url for the object in the bucket."""
         return proto + "://" + self.host + "/" + bucket + "/" + key
 
-    def head_object(self, bucket, key):
+    def head_object(self, bucket: str, key: str) -> dict[str, str]:
+        # TODO head is not returning status.
         """get request metadata for key in bucket"""
         status, headers = self._s3_head_request(bucket, key)
         return headers
 
-    def delete_object(self, bucket, key):
+    def delete_object(self, bucket: str, key: str) -> Tuple[int, dict[str, str]]:
         """delete key from bucket"""
         status, headers = self._s3_delete_request(bucket, key)
         return (status, headers)
 
-    def delete_objects(self, bucket, keys, batch_size=1000, quiet=False):
+    def delete_objects(self, bucket: str, keys: Iterable[str], batch_size=1000, quiet=False):
         """delete keys from bucket"""
         for batch in batchify(batch_size, keys):
             xml = self._s3_delete_bulk_request(bucket, batch, quiet)
@@ -179,7 +200,7 @@ class Connection:
             for key, result in results:
                 yield key, result
 
-    def copy_object(self, src_bucket, src_key, dst_bucket, dst_key, headers=None):
+    def copy_object(self, src_bucket: str, src_key: str, dst_bucket: str, dst_key: str, headers: dict[str, str] | None = None) -> Tuple[int, dict[str, str]]:
         """copy key from one bucket to another"""
         if headers is None:
             headers = dict()
@@ -190,16 +211,17 @@ class Connection:
         )
         return (status, resp_headers)
 
+    # TODO we need to add a type annotation for data.
     def put_object(
         self,
-        bucket,
-        key,
+        bucket: str,
+        key: str,
         data,
-        headers=None,
-        sha256_hint=None,
-        checksum_algorithm=None,
-        if_none_match=False,
-        if_match=None,
+        headers: dict[str, str] | None = None,
+        sha256_hint: bytes | None = None,
+        checksum_algorithm: str | None = None,
+        if_none_match = False,
+        if_match = None,
     ):
         """
         Push object from local to bucket with optional integrity and conditional checks.
@@ -324,7 +346,7 @@ class Connection:
     # Http request Functions #
     ##########################
 
-    def _s3_get_service_request(self):
+    def _s3_get_service_request(self) -> str:
         resp = self._s3_request("GET", None, None, {}, {}, "")
         if resp.status != OK:
             raise_http_resp_error(resp)
@@ -334,12 +356,12 @@ class Connection:
 
     def _s3_list_request(
         self,
-        bucket,
-        continuation_token=None,
-        start_after=None,
-        prefix=None,
-        max_keys=None,
-    ):
+        bucket: str,
+        continuation_token: str | None = None,
+        start_after: str | None = None,
+        prefix: str | None = None,
+        max_keys: int | None = None,
+    ) -> str:
         """List bucket using ListObjectsV2 API."""
         args = {}
         # v2 API requires list-type=2
@@ -364,7 +386,7 @@ class Connection:
         self._outstanding_response = None  # Response consumed
         return data
 
-    def _s3_get_request(self, bucket, key, headers=None):
+    def _s3_get_request(self, bucket: str, key: str, headers: dict[str, str] | None = None) -> HTTPResponse:
         if headers is None:
             headers = {}
         # Request checksums in response headers
@@ -375,7 +397,7 @@ class Connection:
             raise_http_resp_error(resp)
         return resp
 
-    def _s3_head_request(self, bucket, key):
+    def _s3_head_request(self, bucket: str, key: str) -> Tuple[int, dict[str, str]]:
         # Request checksums in response headers
         headers = {'x-amz-checksum-mode': 'ENABLED'}
         resp = self._s3_request("HEAD", bucket, key, {}, headers, "")
@@ -385,7 +407,7 @@ class Connection:
         self._outstanding_response = None  # Response consumed
         return (resp.status, resp.getheaders())
 
-    def _s3_delete_request(self, bucket, key):
+    def _s3_delete_request(self, bucket: str, key: str) -> Tuple[int, dict[str, str]]:
         resp = self._s3_request("DELETE", bucket, key, {}, {}, "")
         if resp.status != NO_CONTENT:
             raise_http_resp_error(resp)
@@ -1048,7 +1070,7 @@ LIST_BUCKET_CHECKSUM_ATTRIBUTES = [
 LIST_BUCKET_ALL_ATTRIBUTES = LIST_BUCKET_ATTRIBUTES + LIST_BUCKET_CHECKSUM_ATTRIBUTES
 
 
-def _parse_list_response(xml):
+def _parse_list_response(xml: str) -> Tuple[list[dict[str, str | None]], str | None]:
     """Parse ListObjectsV2 response."""
     ns = {"ListBucketResult": "http://s3.amazonaws.com/doc/2006-03-01/"}
     ns_str = "{http://s3.amazonaws.com/doc/2006-03-01/}"
@@ -1068,20 +1090,18 @@ def _parse_list_response(xml):
     return (items, next_token)
 
 
-def _parse_get_service_response(xml):
+def _parse_get_service_response(xml: str) -> list[str]:
     bucket_path = "{http://s3.amazonaws.com/doc/2006-03-01/}Buckets/{http://s3.amazonaws.com/doc/2006-03-01/}Bucket/{http://s3.amazonaws.com/doc/2006-03-01/}Name"
     tree = parse(xml)
     buckets = tree.findall(bucket_path)
-    names = []
-    for bucket in buckets:
-        names.append(bucket.text)
+    names = [str(b.text) for b in buckets]
     return names
 
 
 KEY_PATH = "{http://s3.amazonaws.com/doc/2006-03-01/}Key"
 
 
-def _tag_normalize(name):
+def _tag_normalize(name: str) -> str:
     if name[0] == "{":
         _, tag = name[1:].split("}")
         return tag
@@ -1089,16 +1109,23 @@ def _tag_normalize(name):
         return name
 
 
-def _parse_delete_bulk_response(xml):
+def _parse_delete_bulk_response(xml: str) -> Generator[Tuple[str, str], None, None]:
     actions = parse(xml)
-    return [
-        (action.find(KEY_PATH).text, _tag_normalize(action.tag)) for action in actions
-    ]
+    for action in actions:
+        if action is None:
+            raise ValueError("Action element is None")
+        key_elem = action.find(KEY_PATH)
+        if key_elem is None:
+            raise ValueError("Key element is None")
+        key_text = key_elem.text
+        if key_text is None:
+            raise ValueError("Key element text is None")
+        tag = _tag_normalize(action.tag)
+        yield (key_text, tag)
 
 
-def _calculate_query_arg_str(args):
+def _calculate_query_arg_str(args: dict[str, str | None]) -> str:
     """
-    args is dict of str-> Maybe str.
     Produces a query arg string like "/?flag_name&argName=argValue..."
     always returns a string. If no args are present produces the empty string.
     """
@@ -1117,4 +1144,4 @@ def _calculate_query_arg_str(args):
 
 
 # Import connection pooling classes
-from s3lib.pool import ConnectionPool, ConnectionLease
+from .pool import ConnectionPool, ConnectionLease

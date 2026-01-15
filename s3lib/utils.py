@@ -88,5 +88,6 @@ def raise_http_resp_error(resp: HTTPResponse) -> None:
     if body:
         logger.debug("Response body: %s", body.decode('utf-8', errors='replace'))
 
+    # TODO we should stop using ValueError to represent an s3 failure. We need a custom exception class for S3 errors.
     raise ValueError(message)
 

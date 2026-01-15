@@ -1,19 +1,23 @@
+from binascii import b2a_base64
+from http.client import HTTPResponse
+from pathlib import Path
 from . import Connection, LIST_BUCKET_ATTRIBUTES, LIST_BUCKET_CHECKSUM_ATTRIBUTES, LIST_BUCKET_KEY, sign
 from base64 import b64encode
 from docopt import docopt
 from json import dumps
-from os import environ
+from os import PathLike, environ
 from os.path import expanduser
 from safeoutput import open as safeopen
 import sys
+from typing import BinaryIO, Tuple
 
-def load_creds_from_file(path):
+def load_creds_from_file(path: PathLike) -> Tuple[str, bytes]:
   with open(path, "r") as f:
     access_id = f.readline().strip()
     secret_key = f.readline().strip().encode('ascii')
     return (access_id, secret_key)
 
-def load_creds_from_vars():
+def load_creds_from_vars() -> Tuple[str, bytes] | None:
   access_id = environ.get('AWS_ACCESS_KEY_ID')
   secret_key = environ.get('AWS_SECRET_ACCESS_KEY')
   if  access_id is not None and secret_key is not None:
@@ -21,10 +25,9 @@ def load_creds_from_vars():
   else:
     return None
 
-def load_creds(path):
+def load_creds(path: PathLike | None) -> Tuple[str, bytes]:
   """
-  path is str
-  returns (access_id, secret) with types (?, bytes)
+  returns (access_id, secret) with types (str, bytes)
   """
   # Use the path if provided.
   if path is not None:
@@ -34,10 +37,11 @@ def load_creds(path):
   if creds is not None:
     return creds
   # Use home dir if provided
-  return load_creds_from_file(expanduser("~/.s3"))
+  home_cred_path = Path(expanduser("~/.s3"))
+  return load_creds_from_file(home_cred_path)
 
 _BUFFSIZE = 65536
-def copy(src, dst):
+def copy(src: BinaryIO, dst: BinaryIO):
       buf = src.read(_BUFFSIZE)
       while len(buf) > 0:
         dst.write(buf)
@@ -66,7 +70,7 @@ Available fields:
           Use s3head to get actual checksum values (SHA256, CRC64NVME, etc).
 """ % (",".join(LIST_BUCKET_ATTRIBUTES), ",".join(LIST_BUCKET_CHECKSUM_ATTRIBUTES))
 
-def ls_main(argv=None):
+def ls_main(argv=None) -> None:
   args = docopt(LS_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
   with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
@@ -102,7 +106,7 @@ Options:
     --if-none-match=<etag>  Skip download if ETag matches (for caching)
 """
 
-def verified_copy(src, dst, verify=True):
+def verified_copy(src: HTTPResponse, dst: BinaryIO, verify: bool = True) -> None:
   """
   Copy from HTTP response to destination, optionally verifying checksum.
 
@@ -148,8 +152,7 @@ def verified_copy(src, dst, verify=True):
       buf = src.read(_BUFFSIZE)
 
     # Verify
-    import binascii
-    actual_checksum = binascii.b2a_base64(hasher.digest()).strip().decode('ascii')
+    actual_checksum = b2a_base64(hasher.digest()).strip().decode('ascii')
     if actual_checksum != expected_checksum:
       raise ValueError(
         f"Checksum verification failed!\n"
@@ -161,7 +164,7 @@ def verified_copy(src, dst, verify=True):
     # No checksum or verification disabled - just copy
     copy(src, dst)
 
-def get_main(argv=None):
+def get_main(argv=None) -> None:
   args = docopt(GET_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
   bucket = args.get('<bucket>')
@@ -197,6 +200,7 @@ def get_main(argv=None):
       print(f"HTTP {response.status}", file=sys.stderr)
       sys.exit(1)
 
+    # TODO we have a type error here because sys.stdout.buffer is TextIO or Any, not TextIO or BinaryIO.
     # Download and verify
     if file_path is None:
       # Write to stdout - don't close it
@@ -219,7 +223,7 @@ Options:
     --creds=<creds>     Name of file to find aws access id and secret key.
 """
 
-def cp_main(argv=None):
+def cp_main(argv=None) -> None:
   args = docopt(CP_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
   with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
@@ -248,7 +252,7 @@ Options:
     --json              Print in json format.
 """
 
-def head_main(argv=None):
+def head_main(argv=None) -> None:
   args = docopt(HEAD_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
   with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
@@ -275,13 +279,14 @@ Options:
     --if-match=<etag>   Only upload if current ETag matches (optimistic locking)
 """
 
-def get_input_fd(path):
+# TODO we have a type error here. sys.stdin is TextIO or Any.
+def get_input_fd(path: PathLike | None) -> BinaryIO:
     if path is None:
         return sys.stdin
     else:
         return open(path, 'rb')
 
-def put_main(argv=None):
+def put_main(argv=None) -> None:
   args = docopt(PUT_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
   headers = {}
@@ -356,7 +361,7 @@ Options:
     --batch=<batch>     Batch size for s3 queries [default: 500].
 """
 
-def rm_main(argv=None):
+def rm_main(argv=None) -> None:
   args = docopt(RM_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
   with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
@@ -373,7 +378,7 @@ Options:
     --creds=<creds>     Name of file to find aws access id and secret key.
 """
 
-def sign_main(argv=None):
+def sign_main(argv=None) -> None:
   args = docopt(SIGN_USAGE, argv)
   (_, secret_key) = load_creds(args.get('--creds'))
   with open(args.get('<file>'), 'rb') as f:
