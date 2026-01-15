@@ -50,8 +50,11 @@ class Connection:
         self.conn_timeout = conn_timeout
         self.conn = None
         self._outstanding_response = None
+        self._server_requested_close = False
         # Default region: env var > us-east-1 (matches boto3 behavior)
         self.region = region or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+        # Track socket identity even after socket closes
+        self._socket_identity = None  # Will be set to "fd=X local_port=Y" when connected
 
     def __enter__(self):
         self._connect()
@@ -515,9 +518,10 @@ class Connection:
                         md5_hint=md5_hint,
                     )
                     break  # Success, exit retry loop
-                except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError) as e:
+                except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, ValueError) as e:
                     last_error = e
-                    # _s3_request_inner already called _disconnect(), so next attempt will reconnect
+                    # Connection may be in bad state, disconnect before retry
+                    self._disconnect()
                     if retry == max_retries - 1:
                         # Exhausted retries, re-raise the error
                         raise
@@ -677,16 +681,113 @@ class Connection:
 
         if self.conn is None:
             raise RuntimeError("Attempted to make request without opening connection.")
+
         # Make the HTTP request
+        import time
+        import os
+        request_start = time.time()
+
+        # Helper to get socket info
+        def get_sock_info():
+            if hasattr(self.conn, 'sock') and self.conn.sock is not None:
+                try:
+                    fd = self.conn.sock.fileno()
+                    local_port = self.conn.sock.getsockname()[1]
+                    remote_addr = self.conn.sock.getpeername()
+                    return f"fd={fd} local_port={local_port} remote={remote_addr}"
+                except Exception as e:
+                    # Socket is broken, use cached identity if available
+                    if self._socket_identity:
+                        return f"{self._socket_identity} (disconnected: {type(e).__name__})"
+                    return f"error: {e}"
+            # Socket doesn't exist, check if we had one before
+            if self._socket_identity:
+                return f"{self._socket_identity} (closed)"
+            return "not connected"
+
+        # Debug logging (enable with S3LIB_DEBUG=1)
+        debug_enabled = os.environ.get('S3LIB_DEBUG')
+        if debug_enabled:
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            sock_info = get_sock_info()
+
+            # Log content info
+            content_info = "empty"
+            if content:
+                if hasattr(content, 'fileno'):
+                    try:
+                        filestat = os.fstat(content.fileno())
+                        content_info = f"file ({filestat.st_size} bytes)"
+                    except:
+                        content_info = "file (size unknown)"
+                elif isinstance(content, bytes):
+                    content_info = f"bytes ({len(content)} bytes)"
+                elif isinstance(content, str):
+                    content_info = f"string ({len(content)} chars)"
+
+            print(f"[{timestamp}] DEBUG: Starting {method} request to {resource}, content: {content_info}, socket: {sock_info}", file=sys.stderr)
+            print(f"[{timestamp}] DEBUG: Request headers: {dict(headers)}", file=sys.stderr)
+
+            # Log file position before request if it's a file
+            file_pos_before = None
+            if hasattr(content, 'tell'):
+                try:
+                    file_pos_before = content.tell()
+                    file_id = id(content)  # Python object ID
+                    print(f"[{timestamp}] DEBUG: File object id={file_id}, position before request: {file_pos_before}", file=sys.stderr)
+                except:
+                    pass
+
         try:
+            # Seek file-like objects back to the beginning for retry safety.
+            # This handles the case where s3lib's internal retry loop (for connection errors)
+            # is retrying with a file handle that was partially/fully consumed by a previous attempt.
+            # Note: For non-seekable streams (pipes), caller should handle retries by providing
+            # fresh file handles (e.g., farmfs's retryFdIo2 calls getSrcHandle() for each retry).
+            if hasattr(content, 'seek') and hasattr(content, 'tell'):
+                try:
+                    current_pos = content.tell()
+                    if current_pos != 0:
+                        if debug_enabled:
+                            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] DEBUG: File was at position {current_pos}, seeking back to 0", file=sys.stderr)
+                        content.seek(0)
+                except:
+                    pass  # If seek fails (non-seekable stream), proceed anyway
+
+            request_call_start = time.time()
             if sys.version_info >= (3, 0):
                 self.conn.request(
                     method, resource, content, headers, encode_chunked=False
                 )
             else:
                 self.conn.request(method, resource, content, headers)
+            request_call_duration = time.time() - request_call_start
 
+            # Log file position after request
+            if debug_enabled and file_pos_before is not None and hasattr(content, 'tell'):
+                try:
+                    file_pos_after = content.tell()
+                    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] DEBUG: File position after request: {file_pos_after} (read {file_pos_after - file_pos_before} bytes)", file=sys.stderr)
+                except:
+                    pass
+
+            if debug_enabled:
+                # Check socket status AFTER conn.request() to see if it connected
+                sock_after_request = get_sock_info()
+                if sock_after_request == "not connected":
+                    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] WARNING: Socket still not connected after conn.request()!", file=sys.stderr)
+                if request_call_duration > 1.0:
+                    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] WARNING: conn.request() took {request_call_duration:.2f}s", file=sys.stderr)
+
+            getresponse_start = time.time()
             resp = self.conn.getresponse()
+            getresponse_duration = time.time() - getresponse_start
+
+            if debug_enabled:
+                total_duration = time.time() - request_start
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                sock_info_after = get_sock_info()
+                print(f"[{timestamp}] DEBUG: Request completed in {total_duration:.2f}s (request: {request_call_duration:.2f}s, getresponse: {getresponse_duration:.2f}s), status: {resp.status}, socket: {sock_info_after}", file=sys.stderr)
         except (
             ConnectionResetError,
             BrokenPipeError,
@@ -694,9 +795,37 @@ class Connection:
             OSError,
             http.client.HTTPException,
         ) as e:
+            # Log socket info before disconnect for debugging
+            if debug_enabled:
+                sock_info = get_sock_info()
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                print(f"[{timestamp}] DEBUG: Request failed with {type(e).__name__}: {e}, socket: {sock_info}", file=sys.stderr)
+
             # Connection is broken, clean it up so next call will reconnect
             self._disconnect()
             raise  # Re-raise for caller to handle/retry
+        except Exception as e:
+            # Log socket info before disconnect for debugging
+            if debug_enabled:
+                sock_info = get_sock_info()
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                print(f"[{timestamp}] DEBUG: Request failed with {type(e).__name__}: {e}, socket: {sock_info}", file=sys.stderr)
+
+            # For any other exception, also disconnect to ensure clean state
+            self._disconnect()
+            raise
+
+        # Check if server wants us to close the connection
+        connection_header = resp.getheader('Connection', '').lower()
+        if connection_header == 'close':
+            if debug_enabled:
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                print(f"[{timestamp}] DEBUG: Server sent 'Connection: close', will disconnect after response consumed", file=sys.stderr)
+            # Mark that we need to disconnect after consuming this response
+            # We can't disconnect now because caller needs to read the response body
+            self._server_requested_close = True
+        else:
+            self._server_requested_close = False
 
         # Track this response so we can validate it's consumed before the next request
         self._outstanding_response = resp
@@ -724,17 +853,67 @@ class Connection:
                 )
             self._outstanding_response = None
 
+            # If server requested close on the last response, disconnect now
+            if self._server_requested_close:
+                import os
+                if os.environ.get('S3LIB_DEBUG'):
+                    import time
+                    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                    print(f"[{timestamp}] DEBUG: Disconnecting as requested by server in previous response", file=sys.stderr)
+                self._disconnect()
+                self._server_requested_close = False
+
     def _connect(self):
         if self.conn is None:
             self.conn = http.client.HTTPConnection(
                 self.host, self.port, timeout=self.conn_timeout
             )
             self._current_endpoint = self.host
+            # Explicitly connect to force socket creation
+            # This prevents issues where HTTPConnection defers connection
+            try:
+                self.conn.connect()
+                # Capture socket identity now while it's valid
+                if hasattr(self.conn, 'sock') and self.conn.sock is not None:
+                    try:
+                        fd = self.conn.sock.fileno()
+                        local_port = self.conn.sock.getsockname()[1]
+                        self._socket_identity = f"fd={fd} local_port={local_port}"
+                    except Exception:
+                        self._socket_identity = "connected (info unavailable)"
+            except Exception as e:
+                # Connection failed, clean up
+                import os
+                if os.environ.get('S3LIB_DEBUG'):
+                    import time
+                    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                    print(f"[{timestamp}] DEBUG: conn.connect() failed: {type(e).__name__}: {e}", file=sys.stderr)
+                self.conn = None
+                self._socket_identity = None
+                raise
         else:
             assert self._current_endpoint is not None
 
     def _disconnect(self):
+        import time
+        import os
         if self.conn is not None:
+            # Debug logging (enable with S3LIB_DEBUG=1)
+            if os.environ.get('S3LIB_DEBUG'):
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                endpoint = self._current_endpoint if hasattr(self, '_current_endpoint') else 'unknown'
+
+                # Get socket identity before closing
+                if hasattr(self.conn, 'sock') and self.conn.sock is not None:
+                    try:
+                        fd = self.conn.sock.fileno()
+                        local_port = self.conn.sock.getsockname()[1]
+                        print(f"[{timestamp}] DEBUG: Closing connection to {endpoint} - fd={fd} local_port={local_port}", file=sys.stderr)
+                    except Exception as e:
+                        print(f"[{timestamp}] DEBUG: Closing connection to {endpoint} (socket info: {e})", file=sys.stderr)
+                else:
+                    print(f"[{timestamp}] DEBUG: Closing connection to {endpoint} (socket already closed)", file=sys.stderr)
+
             try:
                 self.conn.close()
             except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
@@ -745,6 +924,8 @@ class Connection:
                 pass
             self.conn = None
         self._outstanding_response = None
+        self._socket_identity = None  # Clear cached identity
+        self._server_requested_close = False  # Reset flag
 
 
 def sign(secret, string_to_sign):
