@@ -1,3 +1,8 @@
+import logging
+
+# Configure module-level logger
+logger = logging.getLogger(__name__)
+
 ############################
 # Python Iteration Helpers #
 ############################
@@ -58,20 +63,14 @@ def get_string_to_sign(method, content_md5, content_type, http_date, amz_headers
   return string.encode('utf-8')
 
 def raise_http_resp_error(resp):
-    import os
-    import sys
-
     body = resp.read()
     message = "S3 request failed with:\n%s %s\n%s\n%s" % (resp.status, resp.reason, resp.msg, body)
 
     # Log error details if debug mode is enabled
-    if os.environ.get('S3LIB_DEBUG'):
-        import time
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{timestamp}] DEBUG: S3 HTTP Error {resp.status} {resp.reason}", file=sys.stderr)
-        print(f"[{timestamp}] DEBUG: Response headers: {dict(resp.getheaders())}", file=sys.stderr)
-        if body:
-            print(f"[{timestamp}] DEBUG: Response body: {body.decode('utf-8', errors='replace')}", file=sys.stderr)
+    logger.debug("S3 HTTP Error %s %s", resp.status, resp.reason)
+    logger.debug("Response headers: %s", dict(resp.getheaders()))
+    if body:
+        logger.debug("Response body: %s", body.decode('utf-8', errors='replace'))
 
     raise ValueError(message)
 

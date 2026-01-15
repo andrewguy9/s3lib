@@ -3,6 +3,7 @@ from hashlib import sha1
 from hashlib import md5
 import binascii
 import http.client
+import logging
 import time
 from xml.etree.ElementTree import fromstring as parse
 from xml.etree.ElementTree import Element, SubElement, tostring
@@ -19,6 +20,19 @@ from urllib.parse import quote
 import sys
 import stat
 import os
+
+# Configure module-level logger
+logger = logging.getLogger(__name__)
+
+# Enable debug logging via S3LIB_DEBUG environment variable
+if os.environ.get('S3LIB_DEBUG'):
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='[%(asctime)s] %(levelname)s: %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        stream=sys.stderr
+    )
+    logger.setLevel(logging.DEBUG)
 
 
 class ConnectionLifecycleError(Exception):
@@ -683,8 +697,6 @@ class Connection:
             raise RuntimeError("Attempted to make request without opening connection.")
 
         # Make the HTTP request
-        import time
-        import os
         request_start = time.time()
 
         # Helper to get socket info
@@ -705,10 +717,11 @@ class Connection:
                 return f"{self._socket_identity} (closed)"
             return "not connected"
 
-        # Debug logging (enable with S3LIB_DEBUG=1)
-        debug_enabled = os.environ.get('S3LIB_DEBUG')
-        if debug_enabled:
-            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        # Track file position for debug logging
+        file_pos_before = None
+
+        # Debug logging
+        if logger.isEnabledFor(logging.DEBUG):
             sock_info = get_sock_info()
 
             # Log content info
@@ -718,24 +731,23 @@ class Connection:
                     try:
                         filestat = os.fstat(content.fileno())
                         content_info = f"file ({filestat.st_size} bytes)"
-                    except:
+                    except Exception:
                         content_info = "file (size unknown)"
                 elif isinstance(content, bytes):
                     content_info = f"bytes ({len(content)} bytes)"
                 elif isinstance(content, str):
                     content_info = f"string ({len(content)} chars)"
 
-            print(f"[{timestamp}] DEBUG: Starting {method} request to {resource}, content: {content_info}, socket: {sock_info}", file=sys.stderr)
-            print(f"[{timestamp}] DEBUG: Request headers: {dict(headers)}", file=sys.stderr)
+            logger.debug("Starting %s request to %s, content: %s, socket: %s", method, resource, content_info, sock_info)
+            logger.debug("Request headers: %s", dict(headers))
 
             # Log file position before request if it's a file
-            file_pos_before = None
             if hasattr(content, 'tell'):
                 try:
                     file_pos_before = content.tell()
                     file_id = id(content)  # Python object ID
-                    print(f"[{timestamp}] DEBUG: File object id={file_id}, position before request: {file_pos_before}", file=sys.stderr)
-                except:
+                    logger.debug("File object id=%s, position before request: %s", file_id, file_pos_before)
+                except Exception:
                     pass
 
         try:
@@ -748,10 +760,9 @@ class Connection:
                 try:
                     current_pos = content.tell()
                     if current_pos != 0:
-                        if debug_enabled:
-                            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] DEBUG: File was at position {current_pos}, seeking back to 0", file=sys.stderr)
+                        logger.debug("File was at position %s, seeking back to 0", current_pos)
                         content.seek(0)
-                except:
+                except Exception:
                     pass  # If seek fails (non-seekable stream), proceed anyway
 
             request_call_start = time.time()
@@ -764,30 +775,30 @@ class Connection:
             request_call_duration = time.time() - request_call_start
 
             # Log file position after request
-            if debug_enabled and file_pos_before is not None and hasattr(content, 'tell'):
+            if logger.isEnabledFor(logging.DEBUG) and file_pos_before is not None and hasattr(content, 'tell'):
                 try:
                     file_pos_after = content.tell()
-                    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] DEBUG: File position after request: {file_pos_after} (read {file_pos_after - file_pos_before} bytes)", file=sys.stderr)
-                except:
+                    logger.debug("File position after request: %s (read %s bytes)", file_pos_after, file_pos_after - file_pos_before)
+                except Exception:
                     pass
 
-            if debug_enabled:
+            if logger.isEnabledFor(logging.DEBUG):
                 # Check socket status AFTER conn.request() to see if it connected
                 sock_after_request = get_sock_info()
                 if sock_after_request == "not connected":
-                    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] WARNING: Socket still not connected after conn.request()!", file=sys.stderr)
+                    logger.warning("Socket still not connected after conn.request()!")
                 if request_call_duration > 1.0:
-                    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] WARNING: conn.request() took {request_call_duration:.2f}s", file=sys.stderr)
+                    logger.warning("conn.request() took %.2fs", request_call_duration)
 
             getresponse_start = time.time()
             resp = self.conn.getresponse()
             getresponse_duration = time.time() - getresponse_start
 
-            if debug_enabled:
+            if logger.isEnabledFor(logging.DEBUG):
                 total_duration = time.time() - request_start
-                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
                 sock_info_after = get_sock_info()
-                print(f"[{timestamp}] DEBUG: Request completed in {total_duration:.2f}s (request: {request_call_duration:.2f}s, getresponse: {getresponse_duration:.2f}s), status: {resp.status}, socket: {sock_info_after}", file=sys.stderr)
+                logger.debug("Request completed in %.2fs (request: %.2fs, getresponse: %.2fs), status: %s, socket: %s",
+                            total_duration, request_call_duration, getresponse_duration, resp.status, sock_info_after)
         except (
             ConnectionResetError,
             BrokenPipeError,
@@ -796,20 +807,14 @@ class Connection:
             http.client.HTTPException,
         ) as e:
             # Log socket info before disconnect for debugging
-            if debug_enabled:
-                sock_info = get_sock_info()
-                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                print(f"[{timestamp}] DEBUG: Request failed with {type(e).__name__}: {e}, socket: {sock_info}", file=sys.stderr)
+            logger.debug("Request failed with %s: %s, socket: %s", type(e).__name__, e, get_sock_info())
 
             # Connection is broken, clean it up so next call will reconnect
             self._disconnect()
             raise  # Re-raise for caller to handle/retry
         except Exception as e:
             # Log socket info before disconnect for debugging
-            if debug_enabled:
-                sock_info = get_sock_info()
-                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                print(f"[{timestamp}] DEBUG: Request failed with {type(e).__name__}: {e}, socket: {sock_info}", file=sys.stderr)
+            logger.debug("Request failed with %s: %s, socket: %s", type(e).__name__, e, get_sock_info())
 
             # For any other exception, also disconnect to ensure clean state
             self._disconnect()
@@ -818,9 +823,7 @@ class Connection:
         # Check if server wants us to close the connection
         connection_header = resp.getheader('Connection', '').lower()
         if connection_header == 'close':
-            if debug_enabled:
-                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                print(f"[{timestamp}] DEBUG: Server sent 'Connection: close', will disconnect after response consumed", file=sys.stderr)
+            logger.debug("Server sent 'Connection: close', will disconnect after response consumed")
             # Mark that we need to disconnect after consuming this response
             # We can't disconnect now because caller needs to read the response body
             self._server_requested_close = True
@@ -855,11 +858,7 @@ class Connection:
 
             # If server requested close on the last response, disconnect now
             if self._server_requested_close:
-                import os
-                if os.environ.get('S3LIB_DEBUG'):
-                    import time
-                    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                    print(f"[{timestamp}] DEBUG: Disconnecting as requested by server in previous response", file=sys.stderr)
+                logger.debug("Disconnecting as requested by server in previous response")
                 self._disconnect()
                 self._server_requested_close = False
 
@@ -883,11 +882,7 @@ class Connection:
                         self._socket_identity = "connected (info unavailable)"
             except Exception as e:
                 # Connection failed, clean up
-                import os
-                if os.environ.get('S3LIB_DEBUG'):
-                    import time
-                    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                    print(f"[{timestamp}] DEBUG: conn.connect() failed: {type(e).__name__}: {e}", file=sys.stderr)
+                logger.debug("conn.connect() failed: %s: %s", type(e).__name__, e)
                 self.conn = None
                 self._socket_identity = None
                 raise
@@ -895,12 +890,9 @@ class Connection:
             assert self._current_endpoint is not None
 
     def _disconnect(self):
-        import time
-        import os
         if self.conn is not None:
-            # Debug logging (enable with S3LIB_DEBUG=1)
-            if os.environ.get('S3LIB_DEBUG'):
-                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            # Debug logging
+            if logger.isEnabledFor(logging.DEBUG):
                 endpoint = self._current_endpoint if hasattr(self, '_current_endpoint') else 'unknown'
 
                 # Get socket identity before closing
@@ -908,11 +900,11 @@ class Connection:
                     try:
                         fd = self.conn.sock.fileno()
                         local_port = self.conn.sock.getsockname()[1]
-                        print(f"[{timestamp}] DEBUG: Closing connection to {endpoint} - fd={fd} local_port={local_port}", file=sys.stderr)
+                        logger.debug("Closing connection to %s - fd=%s local_port=%s", endpoint, fd, local_port)
                     except Exception as e:
-                        print(f"[{timestamp}] DEBUG: Closing connection to {endpoint} (socket info: {e})", file=sys.stderr)
+                        logger.debug("Closing connection to %s (socket info: %s)", endpoint, e)
                 else:
-                    print(f"[{timestamp}] DEBUG: Closing connection to {endpoint} (socket already closed)", file=sys.stderr)
+                    logger.debug("Closing connection to %s (socket already closed)", endpoint)
 
             try:
                 self.conn.close()
