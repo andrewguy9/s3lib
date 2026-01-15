@@ -3,7 +3,7 @@ import sys
 from setuptools import setup
 from setuptools.command.test import test as TestCommand
 
-requires =  ['safeoutput>=2.0', 'future', 'docopt']
+requires =  ['safeoutput>=3.0', 'future', 'docopt']
 test_requires = ['tox', 'pytest==7.2.2', 'pytest-timeout']
 
 setup(
