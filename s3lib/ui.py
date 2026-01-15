@@ -1,17 +1,10 @@
-from __future__ import print_function
-import argparse
-import base64
-from os.path import expanduser
-from s3lib import Connection
-from s3lib import sign
-from s3lib import LIST_BUCKET_KEY
-from s3lib import LIST_BUCKET_ATTRIBUTES
-from s3lib import LIST_BUCKET_CHECKSUM_ATTRIBUTES
-from s3lib import LIST_BUCKET_ALL_ATTRIBUTES
-from safeoutput import open as safeopen
-from os import environ
+from . import Connection, LIST_BUCKET_ATTRIBUTES, LIST_BUCKET_CHECKSUM_ATTRIBUTES, LIST_BUCKET_KEY, sign
+from base64 import b64encode
 from docopt import docopt
-import json
+from json import dumps
+from os import environ
+from os.path import expanduser
+from safeoutput import open as safeopen
 import sys
 
 def load_creds_from_file(path):
@@ -262,7 +255,7 @@ def head_main(argv=None):
     for obj in args.get('<object>'):
       headers = s3.head_object(args.get('<bucket>'), obj)
       if args.get('--json'):
-        print(json.dumps({"object":obj, "headers":dict(headers)}))
+        print(dumps({"object":obj, "headers":dict(headers)}))
       else:
         for (header,value) in headers:
           print("%s: %s" % (header, value))
@@ -385,7 +378,7 @@ def sign_main(argv=None):
   (_, secret_key) = load_creds(args.get('--creds'))
   with open(args.get('<file>'), 'rb') as f:
     policy_document = f.read()
-  policy = base64.b64encode(policy_document)
+  policy = b64encode(policy_document)
   signature = sign(secret_key, policy)
   print(policy.decode())
   print(signature.decode())
