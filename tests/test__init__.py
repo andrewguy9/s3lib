@@ -2,6 +2,7 @@ import s3lib
 from s3lib import *
 import pytest
 import re
+import os
 
 def validate_signature(string, expected_string, expected_signature):
   assert(string == expected_string)
@@ -102,3 +103,85 @@ def test_disconnect_safety():
     conn._disconnect()
     assert conn.conn is None
     assert conn._outstanding_response is None
+
+def test_connection_reset_recovery():
+    """Test that connection errors are handled gracefully with automatic retry."""
+    import unittest.mock as mock
+
+    conn = s3lib.Connection("someaccess", b"somesecret")
+
+    # Mock _connect to always set up a failing connection
+    original_connect = conn._connect
+    call_count = [0]
+
+    def mock_connect():
+        call_count[0] += 1
+        mock_http_conn = mock.Mock()
+        mock_http_conn.request.side_effect = ConnectionResetError("Connection reset by peer")
+        conn.conn = mock_http_conn
+        conn._current_endpoint = conn.host
+
+    conn._connect = mock_connect
+
+    # Try to make a request - should retry and then re-raise after exhausting retries
+    with pytest.raises(ConnectionResetError):
+        conn._s3_request("GET", "bucket", "key", {}, {}, '')
+
+    # Should have tried 3 times (initial + 2 retries)
+    assert call_count[0] == 3
+
+    # Connection should have been cleaned up
+    assert conn.conn is None
+    assert conn._outstanding_response is None
+
+def test_disconnect_broken_connection():
+    """Test that disconnect handles already-broken connections gracefully."""
+    import unittest.mock as mock
+
+    conn = s3lib.Connection("someaccess", b"somesecret")
+    conn._connect()
+
+    # Mock connection that raises error when closing
+    mock_http_conn = mock.Mock()
+    mock_http_conn.close.side_effect = BrokenPipeError("Broken pipe")
+    conn.conn = mock_http_conn
+
+    # Should not raise - should handle the error gracefully
+    conn._disconnect()
+    assert conn.conn is None
+    assert conn._outstanding_response is None
+
+def test_automatic_region_discovery():
+    """
+    Test that regions are automatically discovered from redirects.
+    Tests both us-east-1 (default) and us-west-1 (requires discovery).
+    """
+    # Note: This test requires valid AWS credentials in environment or ~/.s3
+    # It tests against real S3 buckets
+    try:
+        from s3lib.ui import load_creds
+        (access_id, secret_key) = load_creds(None)
+    except:
+        pytest.skip("No AWS credentials available")
+
+    # Create connection without specifying region (defaults to us-east-1)
+    with s3lib.Connection(access_id, secret_key) as conn:
+        # Test us-east-1 bucket (should work with default region)
+        buckets_east = list(conn.list_bucket('s3libtestbucket'))
+        assert len(buckets_east) > 0
+        # Verify region is still us-east-1
+        assert conn.region == 'us-east-1'
+
+        # Test us-west-1 bucket (should auto-discover region from redirect)
+        buckets_west = list(conn.list_bucket('s3libtestbucket2'))
+        assert len(buckets_west) > 0
+        # Verify region was discovered and updated
+        assert conn.region == 'us-west-1'
+        # Verify region was cached for this bucket
+        assert conn._bucket_regions['s3libtestbucket2'] == 'us-west-1'
+
+        # Test that subsequent requests to the same bucket use cached region
+        buckets_west_2 = list(conn.list_bucket('s3libtestbucket2'))
+        assert len(buckets_west_2) > 0
+        assert conn.region == 'us-west-1'
+

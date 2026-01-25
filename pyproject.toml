@@ -1,0 +1,86 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "s3lib"
+version = "2.1.0"
+description = "Library and utilities for interfacing with S3"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    {name = "Andrew Thomson", email = "athomsonguy@gmail.com"}
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Topic :: Software Development :: Libraries",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+dependencies = [
+    "safeoutput>=3.0",
+    "docopt>=0.6.2",
+]
+
+[project.optional-dependencies]
+test = [
+    "tox>=4.0",
+    "pytest>=7.2.2",
+    "pytest-timeout>=2.0",
+    "mypy>=1.0",
+    "types-docopt>=0.6.11",
+]
+
+[project.urls]
+Homepage = "https://github.com/andrewthomson/s3lib"
+Repository = "https://github.com/andrewthomson/s3lib"
+Issues = "https://github.com/andrewthomson/s3lib/issues"
+
+[project.scripts]
+s3ls = "s3lib.ui:ls_main"
+s3get = "s3lib.ui:get_main"
+s3cp = "s3lib.ui:cp_main"
+s3head = "s3lib.ui:head_main"
+s3put = "s3lib.ui:put_main"
+s3rm = "s3lib.ui:rm_main"
+s3sign = "s3lib.ui:sign_main"
+
+[tool.setuptools]
+packages = ["s3lib"]
+
+[tool.setuptools.package-data]
+s3lib = ["py.typed"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = false
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = false
+warn_no_return = true
+strict_equality = true
+exclude = ["env3/", "build/", "dist/"]
+allow_untyped_globals = true
+
+[[tool.mypy.overrides]]
+module = "safeoutput.*"
+follow_imports = "skip"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v"
+timeout = 5
+timeout_method = "thread"
+timeout_func_only = false

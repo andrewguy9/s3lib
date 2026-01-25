@@ -4,6 +4,14 @@ import os.path
 import uuid
 from hashlib import md5
 
+@pytest.fixture(params=[
+    ("us-east-1", "s3libtestbucket"),
+    ("us-west-1", "s3libtestbucket2"),
+])
+def testbucket_region(request):
+    """Parametrized fixture providing (region, bucket) tuples for multi-region testing."""
+    return request.param
+
 @pytest.fixture
 def testbucket():
     return 's3libtestbucket'
@@ -76,7 +84,11 @@ def test_s3rm(capsys, testbucket, testkey):
     assert captured.out == ""
     assert captured.err == ""
 
-def test_s3put_file(tmp_path, capsys, testbucket, testkey, testkey2, testvalue):
+def test_s3put_file(tmp_path, capsys, testbucket_region, testkey, testkey2, testvalue, monkeypatch):
+    region, testbucket = testbucket_region
+    # Set AWS_DEFAULT_REGION so Connection uses the correct region
+    monkeypatch.setenv('AWS_DEFAULT_REGION', region)
+
     path = os.path.join(str(tmp_path), "test_file")
     with open(path, 'wb') as fd: fd.write(testvalue)
     etag = md5(testvalue).hexdigest()
