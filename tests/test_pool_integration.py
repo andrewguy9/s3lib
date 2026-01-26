@@ -201,3 +201,43 @@ def test_pool_connection_survives_operations(credentials, bucket, testprefix):
         stats = pool.stats()
         assert stats['available'] == 1
         assert stats['total_connections'] == 1
+
+
+def test_connection_stats(credentials, bucket, testprefix):
+    """Test that connection statistics are tracked correctly."""
+    access_id, secret_key = credentials
+
+    with ConnectionPool(access_id, secret_key) as pool:
+        with pool.lease() as conn:
+            # Do a warmup request to trigger any initial region discovery
+            key = f'{testprefix}warmup'
+            conn.put_object(bucket, key, b'warmup')
+            conn.delete_object(bucket, key)
+
+            # Now check stats after warmup
+            stats = conn.stats()
+            warmup_connects = stats['connects']
+            warmup_requests = stats['requests']
+            warmup_redirects = stats['redirects']
+
+            # Do some operations
+            for i in range(3):
+                key = f'{testprefix}{i}'
+                data = f'stats test {i}'.encode('utf-8')
+                conn.put_object(bucket, key, data)
+
+            # Verify and clean up
+            for i in range(3):
+                key = f'{testprefix}{i}'
+                resp = conn.get_object(bucket, key)
+                resp.read()
+                conn.delete_object(bucket, key)
+
+            # Check stats after operations
+            stats = conn.stats()
+            # 3 PUTs + 3 GETs + 3 DELETEs = 9 requests
+            assert stats['requests'] == warmup_requests + 9
+            # Should not have any new redirects after warmup
+            assert stats['redirects'] == warmup_redirects
+            # Should reuse the same connection (no new connects)
+            assert stats['connects'] == warmup_connects

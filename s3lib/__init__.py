@@ -68,6 +68,10 @@ class Connection:
         self.region = region or environ.get("AWS_DEFAULT_REGION") or "us-east-1"
         # Track socket identity even after socket closes
         self._socket_identity = None  # Will be set to "fd=X local_port=Y" when connected
+        # Statistics counters for monitoring performance
+        self._connects = 0    # Number of TCP connections established
+        self._requests = 0    # Number of HTTP requests made
+        self._redirects = 0   # Number of S3 redirects (301/307) encountered
 
     def __enter__(self):
         self._connect()
@@ -75,6 +79,26 @@ class Connection:
 
     def __exit__(self, type, value, traceback):
         self._disconnect()
+
+    def stats(self):
+        """
+        Get connection statistics.
+
+        Useful for monitoring performance and detecting unexpected redirects.
+        S3 uses redirects for region discovery; frequent redirects indicate
+        suboptimal configuration that hurts performance.
+
+        Returns:
+            dict: Connection statistics with keys:
+                - connects: Number of TCP connections established
+                - requests: Number of HTTP requests made
+                - redirects: Number of S3 redirects (301/307) encountered
+        """
+        return {
+            'connects': self._connects,
+            'requests': self._requests,
+            'redirects': self._redirects,
+        }
 
     #######################
     # Interface Functions #
@@ -564,6 +588,7 @@ class Connection:
 
             # Check for redirect responses (301 or 307)
             if resp.status in (301, 307):
+                self._redirects += 1
                 # Read the response body to reset the connection
                 resp.read()
 
@@ -782,6 +807,7 @@ class Connection:
 
             request_call_start = time()
             self.conn.request(method, resource, content, headers, encode_chunked=False)
+            self._requests += 1
             request_call_duration = time() - request_call_start
 
             # Log file position after request
@@ -882,6 +908,7 @@ class Connection:
             # This prevents issues where HTTPConnection defers connection
             try:
                 self.conn.connect()
+                self._connects += 1
                 # Capture socket identity now while it's valid
                 if hasattr(self.conn, 'sock') and self.conn.sock is not None:
                     try:
