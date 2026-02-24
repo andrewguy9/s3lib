@@ -61,6 +61,7 @@ Options:
     --mark=<mark>       Starting point for enumeration.
     --prefix=<prefix>   Prefix to match on.
     --batch=<batch>     Batch size for s3 queries [default: 1000].
+    --http              Use HTTP instead of HTTPS (useful in VPCs).
 
 Available fields:
     Standard: %s
@@ -73,7 +74,8 @@ Available fields:
 def ls_main(argv=None) -> None:
   args = docopt(LS_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
-  with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
+  use_ssl = not args.get('--http')
+  with Connection(access_id, secret_key, args.get('--host'), args.get('--port'), use_ssl=use_ssl) as s3:
     with safeopen(args.get('--output')) as outfile:
       bucket = args.get('<bucket>')
       if bucket:
@@ -101,6 +103,7 @@ Options:
     --no-verify-checksum    Disable checksum verification
     --if-match=<etag>       Only download if ETag matches (error if changed)
     --if-none-match=<etag>  Skip download if ETag matches (for caching)
+    --http                  Use HTTP instead of HTTPS (useful in VPCs).
 """
 
 def verified_copy(src: HTTPResponse, dst: BinaryIO, verify: bool = True) -> None:
@@ -168,8 +171,9 @@ def get_main(argv=None) -> None:
   key = args.get('<key>')
   file_path = args.get('<file>')
   verify = not args.get('--no-verify-checksum')
+  use_ssl = not args.get('--http')
 
-  with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
+  with Connection(access_id, secret_key, args.get('--host'), args.get('--port'), use_ssl=use_ssl) as s3:
     # Use structured API for conditional requests
     # User provides ETags from command line (may or may not have quotes)
     # Strip quotes if present to ensure consistent format
@@ -217,12 +221,14 @@ Options:
     --host=<host>       Name of host.
     --port=<port>       Port to connect to.
     --creds=<creds>     Name of file to find aws access id and secret key.
+    --http              Use HTTP instead of HTTPS (useful in VPCs).
 """
 
 def cp_main(argv=None) -> None:
   args = docopt(CP_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
-  with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
+  use_ssl = not args.get('--http')
+  with Connection(access_id, secret_key, args.get('--host'), args.get('--port'), use_ssl=use_ssl) as s3:
     headers = {}
     for header in args.get('--header', []):
       try:
@@ -246,12 +252,14 @@ Options:
     --port=<port>       Port to connect to.
     --creds=<creds>     Name of file to find aws access id and secret key.
     --json              Print in json format.
+    --http              Use HTTP instead of HTTPS (useful in VPCs).
 """
 
 def head_main(argv=None) -> None:
   args = docopt(HEAD_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
-  with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
+  use_ssl = not args.get('--http')
+  with Connection(access_id, secret_key, args.get('--host'), args.get('--port'), use_ssl=use_ssl) as s3:
     for obj in args.get('<object>', []):
       headers = s3.head_object(args.get('<bucket>'), obj)
       if args.get('--json'):
@@ -273,6 +281,7 @@ Options:
     --no-checksum       Disable checksum calculation (for stdin uploads)
     --create-only       Only upload if object doesn't exist (returns 412 if exists)
     --if-match=<etag>   Only upload if current ETag matches (optimistic locking)
+    --http              Use HTTP instead of HTTPS (useful in VPCs).
 """
 
 def get_input_fd(path: PathLike | None) -> BinaryIO:
@@ -284,6 +293,7 @@ def get_input_fd(path: PathLike | None) -> BinaryIO:
 def put_main(argv=None) -> None:
   args = docopt(PUT_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
+  use_ssl = not args.get('--http')
   headers = {}
   for header in args.get('--header', []):
     try:
@@ -292,7 +302,7 @@ def put_main(argv=None) -> None:
     except ValueError:
       raise ValueError("Header '%s' is not of form key:value" % header)
 
-  with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
+  with Connection(access_id, secret_key, args.get('--host'), args.get('--port'), use_ssl=use_ssl) as s3:
     file_path = args.get('<file>')
 
     # Determine checksum setting
@@ -354,12 +364,14 @@ Options:
     --creds=<creds>     Name of file to find aws access id and secret key.
     -v, --verbose       Be verbose when deleting files, showing them as they are removed.
     --batch=<batch>     Batch size for s3 queries [default: 500].
+    --http              Use HTTP instead of HTTPS (useful in VPCs).
 """
 
 def rm_main(argv=None) -> None:
   args = docopt(RM_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
-  with Connection(access_id, secret_key, args.get('--host'), args.get('--port')) as s3:
+  use_ssl = not args.get('--http')
+  with Connection(access_id, secret_key, args.get('--host'), args.get('--port'), use_ssl=use_ssl) as s3:
     batch_size_str = args.get('--batch')
     assert batch_size_str is not None # docopt provides default string.
     for (key, result) in s3.delete_objects(args.get('<bucket>'), args.get('<object>'), int(batch_size_str), not args.get('--verbose')):

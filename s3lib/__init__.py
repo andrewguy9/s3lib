@@ -2,7 +2,8 @@ from binascii import b2a_base64
 from hashlib import md5
 from hashlib import sha1
 from hmac import new as hmac_new
-from http.client import HTTPConnection, HTTPException, HTTPResponse, NO_CONTENT, OK
+from http.client import HTTPConnection, HTTPSConnection, HTTPException, HTTPResponse, NO_CONTENT, OK, RemoteDisconnected
+import ssl
 from logging import basicConfig as logging_basicConfig, DEBUG, getLogger
 from typing import Generator, Iterable, List, Tuple
 from .utils import batchify, raise_http_resp_error, get_string_to_sign
@@ -42,7 +43,8 @@ class Connection:
         host: str | None =None,
         port: int | None = None,
         conn_timeout: float | None = None,
-        region: str | None = None
+        region: str | None = None,
+        use_ssl: bool = True
     ):
         """
         Initialize a new S3 connection.
@@ -52,15 +54,17 @@ class Connection:
             secret: AWS secret access key
             host: S3 endpoint hostname (optional)
             port: Port number (optional)
-            conn_timeout: Connection timeout in seconds (optional)
+            conn_timeout: Connection timeout in seconds (optional, default 10)
             region: AWS region (optional)
+            use_ssl: Use HTTPS if True (default), HTTP if False
         """
         assert isinstance(secret, bytes)
         self.access_id = access_id
         self.secret = secret
-        self.port = port or 80
+        self.use_ssl = use_ssl
+        self.port = port or (443 if use_ssl else 80)
         self.host = host or "s3.amazonaws.com"
-        self.conn_timeout = conn_timeout
+        self.conn_timeout = conn_timeout if conn_timeout is not None else 4
         self.conn = None
         self._outstanding_response = None
         self._server_requested_close = False
@@ -403,12 +407,18 @@ class Connection:
         if max_keys:
             args["max-keys"] = str(max_keys)
 
-        resp = self._s3_request("GET", bucket, None, args, {}, "")
-        if resp.status != OK:
-            raise_http_resp_error(resp)
-        data = resp.read()  # TODO HAS A PAYLOAD, MAYBE NOT BEST READ CANDIDATE.
-        self._outstanding_response = None  # Response consumed
-        return data
+        for _read_attempt in range(3):
+            resp = self._s3_request("GET", bucket, None, args, {}, "")
+            if resp.status != OK:
+                raise_http_resp_error(resp)
+            try:
+                data = resp.read()
+            except (ssl.SSLError, RemoteDisconnected, EOFError, ConnectionResetError, TimeoutError):
+                self._disconnect()
+                continue
+            self._outstanding_response = None  # Response consumed
+            return data
+        raise ConnectionError("Failed to read list response after retries")
 
     def _s3_get_request(self, bucket: str, key: str, headers: dict[str, str] | None = None) -> HTTPResponse:
         if headers is None:
@@ -571,7 +581,8 @@ class Connection:
                         md5_hint=md5_hint,
                     )
                     break  # Success, exit retry loop
-                except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, ValueError) as e:
+                except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, ValueError,
+                        RemoteDisconnected, ssl.SSLError, EOFError, TimeoutError) as e:
                     last_error = e
                     # Connection may be in bad state, disconnect before retry
                     self._disconnect()
@@ -653,7 +664,8 @@ class Connection:
                 ):
                     if hasattr(self, "conn"):
                         self._disconnect()
-                    self.conn = HTTPConnection(
+                    cls = HTTPSConnection if self.use_ssl else HTTPConnection
+                    self.conn = cls(
                         host, self.port, timeout=self.conn_timeout
                     )
                     self._current_endpoint = host
@@ -900,29 +912,32 @@ class Connection:
 
     def _connect(self):
         if self.conn is None:
-            self.conn = HTTPConnection(
-                self.host, self.port, timeout=self.conn_timeout
-            )
-            self._current_endpoint = self.host
-            # Explicitly connect to force socket creation
-            # This prevents issues where HTTPConnection defers connection
-            try:
-                self.conn.connect()
-                self._connects += 1
-                # Capture socket identity now while it's valid
-                if hasattr(self.conn, 'sock') and self.conn.sock is not None:
-                    try:
-                        fd = self.conn.sock.fileno()
-                        local_port = self.conn.sock.getsockname()[1]
-                        self._socket_identity = f"fd={fd} local_port={local_port}"
-                    except Exception:
-                        self._socket_identity = "connected (info unavailable)"
-            except Exception as e:
-                # Connection failed, clean up
-                logger.debug("conn.connect() failed: %s: %s", type(e).__name__, e)
-                self.conn = None
-                self._socket_identity = None
-                raise
+            _transient = (ConnectionResetError, ConnectionRefusedError,
+                          ssl.SSLError, TimeoutError, OSError)
+            for attempt in range(3):
+                cls = HTTPSConnection if self.use_ssl else HTTPConnection
+                self.conn = cls(
+                    self.host, self.port, timeout=self.conn_timeout
+                )
+                self._current_endpoint = self.host
+                try:
+                    self.conn.connect()
+                    self._connects += 1
+                    # Capture socket identity now while it's valid
+                    if hasattr(self.conn, 'sock') and self.conn.sock is not None:
+                        try:
+                            fd = self.conn.sock.fileno()
+                            local_port = self.conn.sock.getsockname()[1]
+                            self._socket_identity = f"fd={fd} local_port={local_port}"
+                        except Exception:
+                            self._socket_identity = "connected (info unavailable)"
+                    return  # Connected successfully
+                except _transient as e:
+                    logger.debug("conn.connect() failed (attempt %d): %s: %s", attempt + 1, type(e).__name__, e)
+                    self.conn = None
+                    self._socket_identity = None
+                    if attempt == 2:
+                        raise
         else:
             assert self._current_endpoint is not None
 

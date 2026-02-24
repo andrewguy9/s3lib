@@ -91,7 +91,7 @@ class ConnectionPool:
     """
 
     def __init__(self, access_id, secret, host=None, port=None,
-                 max_connections=10, conn_timeout=60, wait_timeout=30):
+                 max_connections=10, conn_timeout=60, wait_timeout=30, use_ssl=True):
         """
         Initialize thread-safe connection pool.
 
@@ -99,13 +99,14 @@ class ConnectionPool:
             access_id (str): AWS access key ID
             secret (bytes): AWS secret access key
             host (str, optional): S3 hostname. Defaults to "s3.amazonaws.com"
-            port (int, optional): S3 port. Defaults to 80
+            port (int, optional): S3 port. Defaults to 443 (HTTPS) or 80 (HTTP)
             max_connections (int): Maximum total connections (available + in-use).
                 Defaults to 10
             conn_timeout (int): Timeout for individual connections in seconds.
                 Defaults to 60
             wait_timeout (int): Maximum time to wait for available connection
                 in seconds. Defaults to 30
+            use_ssl (bool): Use HTTPS if True (default), HTTP if False
         """
         # Validate inputs
         if not isinstance(secret, bytes):
@@ -120,8 +121,9 @@ class ConnectionPool:
         # Connection configuration
         self.access_id = access_id
         self.secret = secret
+        self.use_ssl = use_ssl
         self.host = host or "s3.amazonaws.com"
-        self.port = port or 80
+        self.port = port or (443 if use_ssl else 80)
         self.max_connections = max_connections
         self.conn_timeout = conn_timeout
         self.wait_timeout = wait_timeout
@@ -250,7 +252,8 @@ class ConnectionPool:
             self.secret,
             self.host,
             self.port,
-            self.conn_timeout
+            self.conn_timeout,
+            use_ssl=self.use_ssl
         )
 
         # Connect it

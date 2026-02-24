@@ -19,7 +19,7 @@ def test_pool_basic_creation():
     assert pool.max_connections == 5
     assert pool.closed == False
     assert pool.host == "s3.amazonaws.com"
-    assert pool.port == 80
+    assert pool.port == 443  # HTTPS is now the default
 
     pool.close()
     assert pool.closed == True

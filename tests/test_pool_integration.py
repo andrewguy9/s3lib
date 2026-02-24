@@ -12,6 +12,8 @@ import uuid
 import s3lib
 from s3lib import ConnectionPool
 
+pytestmark = pytest.mark.timeout(30)
+
 
 TEST_BUCKETS = ['s3libtestbucket', 's3libtestbucket2']
 
