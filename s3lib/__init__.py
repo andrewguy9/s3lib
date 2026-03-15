@@ -225,8 +225,23 @@ class Connection:
             end_str = "" if end is None else str(end)
             headers["Range"] = f"bytes={start_str}-{end_str}"
 
+        # 206 when a range was requested, 200 for a full object fetch.
+        expected_success = 206 if byte_range is not None else 200
+
         # TODO Want to replace with some enter, exit struct.
-        return self._s3_get_request(bucket, key, headers)
+        response = self._s3_get_request(bucket, key, headers)
+
+        # 304 Not Modified: if_none_match matched - caller asked us not to re-download.
+        # 412 Precondition Failed: if_match didn't match - caller asked us to detect changes.
+        # Both are valid outcomes of conditional requests, not errors.
+        conditional_responses = (304, 412)
+
+        if response.status != expected_success and response.status not in conditional_responses:
+            raise ValueError(
+                f"Expected HTTP {expected_success} but got {response.status}."
+            )
+
+        return response
 
     def get_object_url(self, bucket: str, key: str, proto="https") -> str:
         """get a public url for the object in the bucket."""

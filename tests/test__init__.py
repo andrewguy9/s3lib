@@ -180,6 +180,22 @@ def test_get_object_byte_range_headers():
             f"byte_range={byte_range}: expected {expected_range!r}, got {captured_headers.get('Range')!r}"
 
 
+def test_get_object_byte_range_rejects_200():
+    """Test that a 200 response to a range request raises ValueError."""
+    import unittest.mock as mock
+
+    conn = s3lib.Connection("someaccess", b"somesecret")
+
+    def fake_s3_get_request(bucket, key, headers):
+        mock_resp = mock.Mock()
+        mock_resp.status = 200  # server ignored the Range header
+        return mock_resp
+
+    conn._s3_get_request = fake_s3_get_request
+    with pytest.raises(ValueError, match="Expected HTTP 206"):
+        conn.get_object("bucket", "key", byte_range=(0, 499))
+
+
 def test_get_object_no_range_header_when_omitted():
     """Test that omitting byte_range does not add a Range header."""
     import unittest.mock as mock
