@@ -251,39 +251,14 @@ class Connection:
             else:
                 data = response.read()
         """
-        if headers is None:
-            headers = dict()
-        else:
-            headers = dict(headers)
-
-        # Add conditional headers - quotes required by HTTP protocol
-        if if_match:
-            headers["If-Match"] = f'"{if_match}"'
-        if if_none_match:
-            headers["If-None-Match"] = f'"{if_none_match}"'
-
-        if byte_range is not None:
-            start, end = byte_range
-            start_str = "" if start is None else str(start)
-            end_str = "" if end is None else str(end)
-            headers["Range"] = f"bytes={start_str}-{end_str}"
-
-        # 206 when a range was requested, 200 for a full object fetch.
-        expected_success = 206 if byte_range is not None else 200
-
         # TODO Want to replace with some enter, exit struct.
-        response = self._s3_get_request(bucket, key, headers)
-
-        # 304 Not Modified: if_none_match matched - caller asked us not to re-download.
-        # 412 Precondition Failed: if_match didn't match - caller asked us to detect changes.
-        # Both are valid outcomes of conditional requests, not errors.
-        conditional_responses = (304, 412)
-
-        if response.status != expected_success and response.status not in conditional_responses:
-            raise ValueError(
-                f"Expected HTTP {expected_success} but got {response.status}."
-            )
-
+        response, _ = self._s3_get_request(
+            bucket, key,
+            if_match=if_match,
+            if_none_match=if_none_match,
+            byte_range=byte_range,
+            extra_headers=headers,
+        )
         return response
 
     def get_object2(
@@ -351,35 +326,14 @@ class Connection:
             with stream:
                 header_bytes = stream.read()
         """
-        headers: dict[str, str] = {}
-
-        if if_match:
-            headers["If-Match"] = f'"{if_match}"'
-        if if_none_match:
-            headers["If-None-Match"] = f'"{if_none_match}"'
-
-        if byte_range is not None:
-            start, end = byte_range
-            start_str = "" if start is None else str(start)
-            end_str = "" if end is None else str(end)
-            headers["Range"] = f"bytes={start_str}-{end_str}"
-
-        expected_success = 206 if byte_range is not None else 200
-        conditional_responses = (304, 412)
-
-        response = self._s3_get_request(bucket, key, headers)
-        resp_headers = dict(response.getheaders())
-
-        if response.status in conditional_responses:
-            # No body — consume the empty response to keep the connection clean.
-            response.read()
+        response, resp_headers = self._s3_get_request(
+            bucket, key,
+            if_match=if_match,
+            if_none_match=if_none_match,
+            byte_range=byte_range,
+        )
+        if response is None:
             return (None, resp_headers)
-
-        if response.status != expected_success:
-            raise ValueError(
-                f"Expected HTTP {expected_success} but got {response.status}."
-            )
-
         return (S3ByteStream(response), resp_headers)
 
     def get_object_url(self, bucket: str, key: str, proto="https") -> str:
@@ -597,16 +551,61 @@ class Connection:
             return data
         raise ConnectionError("Failed to read list response after retries")
 
-    def _s3_get_request(self, bucket: str, key: str, headers: dict[str, str] | None = None) -> HTTPResponse:
-        if headers is None:
-            headers = {}
+    def _s3_get_request(
+            self,
+            bucket: str,
+            key: str,
+            if_match: str | None = None,
+            if_none_match: str | None = None,
+            byte_range: Tuple[int | None, int | None] | None = None,
+            extra_headers: dict[str, str] | None = None,
+    ) -> Tuple[HTTPResponse | None, dict[str, str]]:
+        """
+        Execute a GET request against S3, handling all header construction and
+        status validation.
+
+        Returns:
+            (HTTPResponse, headers) on success (200 or 206)
+            (None, headers) for conditional responses (304 or 412) — body consumed internally
+
+        Raises:
+            ValueError: On unexpected HTTP status
+        """
+        headers: dict[str, str] = dict(extra_headers) if extra_headers else {}
+
         # Request checksums in response headers
         headers['x-amz-checksum-mode'] = 'ENABLED'
+
+        # Conditional request headers — quotes required by HTTP protocol
+        if if_match:
+            headers['If-Match'] = f'"{if_match}"'
+        if if_none_match:
+            headers['If-None-Match'] = f'"{if_none_match}"'
+
+        # Byte range header
+        if byte_range is not None:
+            start, end = byte_range
+            start_str = "" if start is None else str(start)
+            end_str = "" if end is None else str(end)
+            headers['Range'] = f"bytes={start_str}-{end_str}"
+
+        # 206 when a range was requested, 200 for a full object fetch.
+        expected_success = 206 if byte_range is not None else 200
+
         resp = self._s3_request("GET", bucket, key, {}, headers, "")
-        # Don't raise for conditional response codes (304, 412) - caller handles them
-        if resp.status not in (OK, 304, 412):
+        resp_headers = dict(resp.getheaders())
+
+        if resp.status in (304, 412):
+            # 304 Not Modified: if_none_match matched, object unchanged.
+            # 412 Precondition Failed: if_match failed, object has changed.
+            # Both have no body — consume to keep the connection clean.
+            resp.read()
+            return (None, resp_headers)
+
+        if resp.status != expected_success:
             raise_http_resp_error(resp)
-        return resp
+
+        return (resp, resp_headers)
 
     def _s3_head_request(self, bucket: str, key: str) -> Tuple[int, dict[str, str]]:
         # Request checksums in response headers

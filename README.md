@@ -245,12 +245,22 @@ with Connection(access_id, secret) as s3:
         print(obj['Key'], obj['Size'], obj['LastModified'])
 
     # Get object
-    response = s3.get_object("mybucket", "myfile.txt")
-    data = response.read()
+    stream, headers = s3.get_object2("mybucket", "myfile.txt")
+    with stream:
+        data = stream.read()
 
     # Get a byte range (first 1024 bytes)
-    response = s3.get_object("mybucket", "myfile.txt", byte_range=(0, 1023))
-    data = response.read()  # returns 206 Partial Content
+    stream, headers = s3.get_object2("mybucket", "myfile.txt", byte_range=(0, 1023))
+    with stream:
+        data = stream.read()
+
+    # Get object only if changed (caching)
+    stream, headers = s3.get_object2("mybucket", "myfile.txt", if_none_match=cached_etag)
+    if stream is None:
+        pass  # unchanged, use cache
+    else:
+        with stream:
+            data = stream.read()
 
     # Upload object
     s3.put_object("mybucket", "newfile.txt", b"Hello World")
@@ -302,31 +312,32 @@ Request only a portion of an object using the `byte_range` parameter. Both start
 ```python
 with Connection(access_id, secret) as s3:
     # First 500 bytes
-    r = s3.get_object("mybucket", "file.bin", byte_range=(0, 499))
-    header = r.read()  # status 206
+    stream, headers = s3.get_object2("mybucket", "file.bin", byte_range=(0, 499))
+    with stream:
+        data = stream.read()
 
     # Bytes 500–999
-    r = s3.get_object("mybucket", "file.bin", byte_range=(500, 999))
-    chunk = r.read()
+    stream, headers = s3.get_object2("mybucket", "file.bin", byte_range=(500, 999))
+    with stream:
+        chunk = stream.read()
 
     # From byte 4096 to end of object
-    r = s3.get_object("mybucket", "file.bin", byte_range=(4096, None))
-    tail = r.read()
+    stream, headers = s3.get_object2("mybucket", "file.bin", byte_range=(4096, None))
+    with stream:
+        tail = stream.read()
 ```
 
 ### Streaming Large Objects
 
-The library is designed for memory efficiency with large files:
+`get_object2` returns an `S3ByteStream` that supports incremental reading. The stream must always be used as a context manager. If fully consumed, the underlying HTTP connection is kept alive for reuse. If exited early, the connection is closed.
 
 ```python
-# Download large file
+# Stream a large file to disk
 with Connection(access_id, secret) as s3:
-    response = s3.get_object("mybucket", "largefile.bin")
-    with open("local-large.bin", "wb") as f:
-        chunk = response.read(65536)  # 64KB chunks
-        while chunk:
+    stream, headers = s3.get_object2("mybucket", "largefile.bin")
+    with stream, open("local-large.bin", "wb") as f:
+        while chunk := stream.read(65536):
             f.write(chunk)
-            chunk = response.read(65536)
 
 # Upload large file
 with Connection(access_id, secret) as s3:

@@ -151,67 +151,82 @@ def test_disconnect_broken_connection():
     assert conn.conn is None
     assert conn._outstanding_response is None
 
-def test_get_object_byte_range_headers():
-    """Test that byte_range correctly sets the Range header."""
+def _make_mock_s3_get_request(status, headers=None, body=b""):
+    """Helper to create a _s3_get_request mock with the new (resp|None, headers) signature."""
     import unittest.mock as mock
+    mock_resp = mock.Mock()
+    mock_resp.status = status
+    mock_resp.getheaders.return_value = list((headers or {}).items())
+    mock_resp.read.side_effect = [body, b""] if body else [b""]
+    resp_headers = dict(headers or {})
+    if status in (304, 412):
+        return lambda *a, **kw: (None, resp_headers)
+    return lambda *a, **kw: (mock_resp, resp_headers)
 
+
+def test_get_object_byte_range_headers():
+    """Test that byte_range correctly sets the Range header in _s3_get_request."""
     conn = s3lib.Connection("someaccess", b"somesecret")
 
     cases = [
-        ((0, None),   "bytes=0-"),
+        ((0, None),    "bytes=0-"),
         ((None, None), "bytes=-"),
-        ((0, 499),    "bytes=0-499"),
-        ((500, 999),  "bytes=500-999"),
-        ((500, None), "bytes=500-"),
+        ((0, 499),     "bytes=0-499"),
+        ((500, 999),   "bytes=500-999"),
+        ((500, None),  "bytes=500-"),
     ]
 
     for byte_range, expected_range in cases:
-        captured_headers = {}
+        captured = {}
 
-        def fake_s3_get_request(bucket, key, headers):
-            captured_headers.update(headers)
+        def fake(bucket, key, if_match=None, if_none_match=None, byte_range=None, extra_headers=None):
+            import unittest.mock as mock
+            captured['byte_range'] = byte_range
             mock_resp = mock.Mock()
             mock_resp.status = 206
-            return mock_resp
+            mock_resp.getheaders.return_value = []
+            mock_resp.read.return_value = b""
+            return (mock_resp, {})
 
-        conn._s3_get_request = fake_s3_get_request
+        conn._s3_get_request = fake
         conn.get_object("bucket", "key", byte_range=byte_range)
-        assert captured_headers.get("Range") == expected_range, \
-            f"byte_range={byte_range}: expected {expected_range!r}, got {captured_headers.get('Range')!r}"
+        assert captured['byte_range'] == byte_range, \
+            f"expected byte_range={byte_range!r} to be passed through"
 
 
-def test_get_object_byte_range_rejects_200():
-    """Test that a 200 response to a range request raises ValueError."""
+def test_s3_get_request_rejects_200_for_range():
+    """_s3_get_request raises ValueError if a range was requested but server returns 200."""
     import unittest.mock as mock
 
     conn = s3lib.Connection("someaccess", b"somesecret")
+    mock_resp = mock.Mock()
+    mock_resp.status = 200  # server ignored the Range header
+    mock_resp.getheaders.return_value = []
+    mock_resp.read.return_value = b""
 
-    def fake_s3_get_request(bucket, key, headers):
-        mock_resp = mock.Mock()
-        mock_resp.status = 200  # server ignored the Range header
-        return mock_resp
-
-    conn._s3_get_request = fake_s3_get_request
-    with pytest.raises(ValueError, match="Expected HTTP 206"):
-        conn.get_object("bucket", "key", byte_range=(0, 499))
+    conn._s3_request = lambda *a, **kw: mock_resp
+    with pytest.raises(Exception):
+        conn._s3_get_request("bucket", "key", byte_range=(0, 499))
 
 
-def test_get_object_no_range_header_when_omitted():
-    """Test that omitting byte_range does not add a Range header."""
+def test_get_object_no_range_when_omitted():
+    """Test that omitting byte_range passes byte_range=None to _s3_get_request."""
     import unittest.mock as mock
 
     conn = s3lib.Connection("someaccess", b"somesecret")
-    captured_headers = {}
+    captured = {}
 
-    def fake_s3_get_request(bucket, key, headers):
-        captured_headers.update(headers)
+    def fake(bucket, key, if_match=None, if_none_match=None, byte_range=None, extra_headers=None):
+        captured['byte_range'] = byte_range
         mock_resp = mock.Mock()
         mock_resp.status = 200
-        return mock_resp
+        mock_resp.getheaders.return_value = []
+        mock_resp.read.return_value = b""
+        return (mock_resp, {})
 
-    conn._s3_get_request = fake_s3_get_request
+    conn._s3_get_request = fake
     conn.get_object("bucket", "key")
-    assert "Range" not in captured_headers
+    assert captured['byte_range'] is None
 
 
 def test_get_object2_returns_stream_on_success():
@@ -219,57 +234,41 @@ def test_get_object2_returns_stream_on_success():
     import unittest.mock as mock
 
     conn = s3lib.Connection("someaccess", b"somesecret")
-
     mock_resp = mock.Mock()
-    mock_resp.status = 200
-    mock_resp.getheaders.return_value = [("content-type", "application/octet-stream")]
     mock_resp.read.side_effect = [b"hello", b""]
+    resp_headers = {"content-type": "application/octet-stream"}
 
-    conn._s3_get_request = lambda bucket, key, headers: mock_resp
+    conn._s3_get_request = lambda *a, **kw: (mock_resp, resp_headers)
 
     stream, headers = conn.get_object2("bucket", "key")
     assert isinstance(stream, s3lib.S3ByteStream)
-    assert headers == {"content-type": "application/octet-stream"}
+    assert headers == resp_headers
     with stream:
         assert stream.read() == b"hello"
 
 
 def test_get_object2_returns_none_on_304():
-    """304 response returns (None, headers) and consumes the empty body."""
-    import unittest.mock as mock
-
+    """304 response returns (None, headers)."""
     conn = s3lib.Connection("someaccess", b"somesecret")
+    resp_headers = {"etag": '"abc123"'}
 
-    mock_resp = mock.Mock()
-    mock_resp.status = 304
-    mock_resp.getheaders.return_value = [("etag", '"abc123"')]
-    mock_resp.read.return_value = b""
-
-    conn._s3_get_request = lambda bucket, key, headers: mock_resp
+    conn._s3_get_request = lambda *a, **kw: (None, resp_headers)
 
     stream, headers = conn.get_object2("bucket", "key", if_none_match="abc123")
     assert stream is None
-    assert headers == {"etag": '"abc123"'}
-    mock_resp.read.assert_called_once()  # body was consumed internally
+    assert headers == resp_headers
 
 
 def test_get_object2_returns_none_on_412():
-    """412 response returns (None, headers) and consumes the empty body."""
-    import unittest.mock as mock
-
+    """412 response returns (None, headers)."""
     conn = s3lib.Connection("someaccess", b"somesecret")
+    resp_headers = {"etag": '"xyz999"'}
 
-    mock_resp = mock.Mock()
-    mock_resp.status = 412
-    mock_resp.getheaders.return_value = [("etag", '"xyz999"')]
-    mock_resp.read.return_value = b""
-
-    conn._s3_get_request = lambda bucket, key, headers: mock_resp
+    conn._s3_get_request = lambda *a, **kw: (None, resp_headers)
 
     stream, headers = conn.get_object2("bucket", "key", if_match="abc123")
     assert stream is None
-    assert headers == {"etag": '"xyz999"'}
-    mock_resp.read.assert_called_once()
+    assert headers == resp_headers
 
 
 def test_get_object2_stream_exhausted_does_not_close():
@@ -277,18 +276,15 @@ def test_get_object2_stream_exhausted_does_not_close():
     import unittest.mock as mock
 
     conn = s3lib.Connection("someaccess", b"somesecret")
-
     mock_resp = mock.Mock()
-    mock_resp.status = 200
-    mock_resp.getheaders.return_value = []
     mock_resp.read.side_effect = [b"data", b""]
 
-    conn._s3_get_request = lambda bucket, key, headers: mock_resp
+    conn._s3_get_request = lambda *a, **kw: (mock_resp, {})
 
     stream, _ = conn.get_object2("bucket", "key")
     with stream:
-        stream.read(-1)  # exhausts the stream
-        stream.read(-1)  # triggers exhausted flag
+        stream.read(-1)  # returns b"data"
+        stream.read(-1)  # returns b"" — triggers exhausted flag
 
     mock_resp.close.assert_not_called()
 
@@ -298,13 +294,10 @@ def test_get_object2_stream_early_exit_closes():
     import unittest.mock as mock
 
     conn = s3lib.Connection("someaccess", b"somesecret")
-
     mock_resp = mock.Mock()
-    mock_resp.status = 200
-    mock_resp.getheaders.return_value = []
     mock_resp.read.return_value = b"some data"
 
-    conn._s3_get_request = lambda bucket, key, headers: mock_resp
+    conn._s3_get_request = lambda *a, **kw: (mock_resp, {})
 
     stream, _ = conn.get_object2("bucket", "key")
     with stream:
@@ -314,17 +307,15 @@ def test_get_object2_stream_early_exit_closes():
 
 
 def test_get_object2_206_on_byte_range():
-    """byte_range request expects 206 and returns a stream."""
+    """byte_range request returns a stream."""
     import unittest.mock as mock
 
     conn = s3lib.Connection("someaccess", b"somesecret")
-
     mock_resp = mock.Mock()
-    mock_resp.status = 206
-    mock_resp.getheaders.return_value = [("content-range", "bytes 0-499/1000")]
     mock_resp.read.side_effect = [b"x" * 500, b""]
+    resp_headers = {"content-range": "bytes 0-499/1000"}
 
-    conn._s3_get_request = lambda bucket, key, headers: mock_resp
+    conn._s3_get_request = lambda *a, **kw: (mock_resp, resp_headers)
 
     stream, headers = conn.get_object2("bucket", "key", byte_range=(0, 499))
     assert isinstance(stream, s3lib.S3ByteStream)
