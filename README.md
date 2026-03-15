@@ -107,6 +107,7 @@ Options:
 - `--port PORT` - Custom port
 - `--output FILE` - Write output to file (default: stdout)
 - `--creds FILE` - Path to credentials file
+- `--range START-END` - Fetch only a byte range (e.g. `0-499`, `500-`, `-999`)
 
 ### s3put - Upload objects
 
@@ -247,6 +248,10 @@ with Connection(access_id, secret) as s3:
     response = s3.get_object("mybucket", "myfile.txt")
     data = response.read()
 
+    # Get a byte range (first 1024 bytes)
+    response = s3.get_object("mybucket", "myfile.txt", byte_range=(0, 1023))
+    data = response.read()  # returns 206 Partial Content
+
     # Upload object
     s3.put_object("mybucket", "newfile.txt", b"Hello World")
 
@@ -288,6 +293,25 @@ with Connection(access_id, secret, port=9000) as s3:
 # Connection timeout
 with Connection(access_id, secret, conn_timeout=60) as s3:
     pass
+```
+
+### Byte Range Fetching
+
+Request only a portion of an object using the `byte_range` parameter. Both start and end are inclusive, 0-based byte positions. Either can be `None`:
+
+```python
+with Connection(access_id, secret) as s3:
+    # First 500 bytes
+    r = s3.get_object("mybucket", "file.bin", byte_range=(0, 499))
+    header = r.read()  # status 206
+
+    # Bytes 500–999
+    r = s3.get_object("mybucket", "file.bin", byte_range=(500, 999))
+    chunk = r.read()
+
+    # From byte 4096 to end of object
+    r = s3.get_object("mybucket", "file.bin", byte_range=(4096, None))
+    tail = r.read()
 ```
 
 ### Streaming Large Objects

@@ -150,7 +150,8 @@ class Connection:
             key: str,
             headers: dict[str, str] | None = None,
             if_match: str | None = None,
-            if_none_match: str | None = None):
+            if_none_match: str | None = None,
+            byte_range: Tuple[int | None, int | None] | None = None):
         """
         Pull down bucket object by key with optional conditional checks.
 
@@ -162,16 +163,32 @@ class Connection:
                       Example: 'abc123def456'
             if_none_match: ETag string (without quotes) - skip download if current ETag matches
                            Example: 'abc123def456'
+            byte_range: Tuple of (start, end) byte positions (inclusive, 0-based).
+                        Use None to mean "from beginning" or "to end".
+                        Examples:
+                          (0, None)    - entire object (same as no range)
+                          (0, 499)     - first 500 bytes
+                          (500, 999)   - bytes 500-999
+                          (500, None)  - from byte 500 to end of object
 
         Returns:
             HTTPResponse object with status:
-            - 200: Success, object downloaded
+            - 200: Success, full object downloaded
+            - 206: Partial Content, byte range returned
             - 304: Not Modified (if_none_match matched, object unchanged)
             - 412: Precondition Failed (if_match didn't match, object changed)
 
         Examples:
             # Basic download
             response = conn.get_object(bucket, key)
+            data = response.read()
+
+            # First 1024 bytes
+            response = conn.get_object(bucket, key, byte_range=(0, 1023))
+            data = response.read()
+
+            # From byte 4096 to end
+            response = conn.get_object(bucket, key, byte_range=(4096, None))
             data = response.read()
 
             # Only download if changed (caching)
@@ -201,6 +218,12 @@ class Connection:
             headers["If-Match"] = f'"{if_match}"'
         if if_none_match:
             headers["If-None-Match"] = f'"{if_none_match}"'
+
+        if byte_range is not None:
+            start, end = byte_range
+            start_str = "" if start is None else str(start)
+            end_str = "" if end is None else str(end)
+            headers["Range"] = f"bytes={start_str}-{end_str}"
 
         # TODO Want to replace with some enter, exit struct.
         return self._s3_get_request(bucket, key, headers)

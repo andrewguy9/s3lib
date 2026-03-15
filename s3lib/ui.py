@@ -103,6 +103,7 @@ Options:
     --no-verify-checksum    Disable checksum verification
     --if-match=<etag>       Only download if ETag matches (error if changed)
     --if-none-match=<etag>  Skip download if ETag matches (for caching)
+    --range=<range>         Byte range to fetch, e.g. 0-499, 500-, -999
     --http                  Use HTTP instead of HTTPS (useful in VPCs).
 """
 
@@ -164,6 +165,16 @@ def verified_copy(src: HTTPResponse, dst: BinaryIO, verify: bool = True) -> None
     # No checksum or verification disabled - just copy
     copy(src, dst)
 
+def _parse_range(range_str: str) -> Tuple[int | None, int | None]:
+  """Parse a range string like '0-499', '500-', or '-999' into a (start, end) tuple."""
+  parts = range_str.split('-', 1)
+  if len(parts) != 2:
+    raise ValueError(f"Invalid range '{range_str}': expected START-END, START-, or -END")
+  start = int(parts[0]) if parts[0] else None
+  end = int(parts[1]) if parts[1] else None
+  return (start, end)
+
+
 def get_main(argv=None) -> None:
   args = docopt(GET_USAGE, argv)
   (access_id, secret_key) = load_creds(args.get('--creds'))
@@ -172,6 +183,10 @@ def get_main(argv=None) -> None:
   file_path = args.get('<file>')
   verify = not args.get('--no-verify-checksum')
   use_ssl = not args.get('--http')
+
+  byte_range = None
+  if args.get('--range'):
+    byte_range = _parse_range(args['--range'])
 
   with Connection(access_id, secret_key, args.get('--host'), args.get('--port'), use_ssl=use_ssl) as s3:
     # Use structured API for conditional requests
@@ -185,7 +200,7 @@ def get_main(argv=None) -> None:
     if if_none_match:
       if_none_match = if_none_match.strip('"')
 
-    response = s3.get_object(bucket, key, if_match=if_match, if_none_match=if_none_match)
+    response = s3.get_object(bucket, key, if_match=if_match, if_none_match=if_none_match, byte_range=byte_range)
 
     # Handle conditional response codes
     if response.status == 304:
@@ -196,7 +211,7 @@ def get_main(argv=None) -> None:
       # Precondition Failed - ETag didn't match
       print("412 Precondition Failed - ETag mismatch", file=sys.stderr)
       sys.exit(1)
-    elif response.status != 200:
+    elif response.status not in (200, 206):
       # Other error
       print(f"HTTP {response.status}", file=sys.stderr)
       sys.exit(1)

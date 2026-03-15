@@ -151,6 +151,53 @@ def test_disconnect_broken_connection():
     assert conn.conn is None
     assert conn._outstanding_response is None
 
+def test_get_object_byte_range_headers():
+    """Test that byte_range correctly sets the Range header."""
+    import unittest.mock as mock
+
+    conn = s3lib.Connection("someaccess", b"somesecret")
+
+    cases = [
+        ((0, None),   "bytes=0-"),
+        ((None, None), "bytes=-"),
+        ((0, 499),    "bytes=0-499"),
+        ((500, 999),  "bytes=500-999"),
+        ((500, None), "bytes=500-"),
+    ]
+
+    for byte_range, expected_range in cases:
+        captured_headers = {}
+
+        def fake_s3_get_request(bucket, key, headers):
+            captured_headers.update(headers)
+            mock_resp = mock.Mock()
+            mock_resp.status = 206
+            return mock_resp
+
+        conn._s3_get_request = fake_s3_get_request
+        conn.get_object("bucket", "key", byte_range=byte_range)
+        assert captured_headers.get("Range") == expected_range, \
+            f"byte_range={byte_range}: expected {expected_range!r}, got {captured_headers.get('Range')!r}"
+
+
+def test_get_object_no_range_header_when_omitted():
+    """Test that omitting byte_range does not add a Range header."""
+    import unittest.mock as mock
+
+    conn = s3lib.Connection("someaccess", b"somesecret")
+    captured_headers = {}
+
+    def fake_s3_get_request(bucket, key, headers):
+        captured_headers.update(headers)
+        mock_resp = mock.Mock()
+        mock_resp.status = 200
+        return mock_resp
+
+    conn._s3_get_request = fake_s3_get_request
+    conn.get_object("bucket", "key")
+    assert "Range" not in captured_headers
+
+
 def test_automatic_region_discovery():
     """
     Test that regions are automatically discovered from redirects.
