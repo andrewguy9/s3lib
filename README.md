@@ -263,11 +263,12 @@ with Connection(access_id, secret) as s3:
             data = stream.read()
 
     # Upload object
-    s3.put_object("mybucket", "newfile.txt", b"Hello World")
+    result = s3.put_object2("mybucket", "newfile.txt", b"Hello World")
+    print(result['etag'])       # use for future consistency checks
 
     # Upload from file
     with open("local.txt", "rb") as f:
-        s3.put_object("mybucket", "remote.txt", f)
+        result = s3.put_object2("mybucket", "remote.txt", f)
 
     # Copy object
     s3.copy_object("bucket1", "file.txt", "bucket2", "file.txt")

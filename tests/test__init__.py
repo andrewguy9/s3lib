@@ -324,6 +324,49 @@ def test_get_object2_206_on_byte_range():
     assert len(data) == 500
 
 
+def test_put_object2_returns_put_result():
+    """Successful PUT returns a PutResult with etag, version_id, checksum."""
+    import unittest.mock as mock
+
+    conn = s3lib.Connection("someaccess", b"somesecret")
+
+    resp_headers = [
+        ("etag", '"abc123"'),
+        ("x-amz-version-id", "v1"),
+        ("x-amz-checksum-sha256", "base64checksum=="),
+    ]
+    mock_resp = mock.Mock()
+    mock_resp.status = 200
+    mock_resp.getheaders.return_value = resp_headers
+    mock_resp.read.return_value = b""
+
+    conn._s3_request = lambda *a, **kw: mock_resp
+
+    result = conn.put_object2("bucket", "key", b"data")
+    assert result['etag'] == 'abc123'           # quotes stripped
+    assert result['version_id'] == 'v1'
+    assert result['checksum'] == 'base64checksum=='
+
+
+def test_put_object2_no_version_or_checksum():
+    """PutResult fields are None when headers are absent."""
+    import unittest.mock as mock
+
+    conn = s3lib.Connection("someaccess", b"somesecret")
+
+    mock_resp = mock.Mock()
+    mock_resp.status = 200
+    mock_resp.getheaders.return_value = [("etag", '"xyz"')]
+    mock_resp.read.return_value = b""
+
+    conn._s3_request = lambda *a, **kw: mock_resp
+
+    result = conn.put_object2("bucket", "key", b"data")
+    assert result['etag'] == 'xyz'
+    assert result['version_id'] is None
+    assert result['checksum'] is None
+
+
 def test_automatic_region_discovery():
     """
     Test that regions are automatically discovered from redirects.

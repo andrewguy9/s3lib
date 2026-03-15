@@ -5,7 +5,7 @@ from hmac import new as hmac_new
 from http.client import HTTPConnection, HTTPSConnection, HTTPException, HTTPResponse, NO_CONTENT, OK, RemoteDisconnected
 import ssl
 from logging import basicConfig as logging_basicConfig, DEBUG, getLogger
-from typing import Generator, Iterable, List, Tuple
+from typing import Generator, Iterable, List, Tuple, TypedDict
 from .utils import batchify, raise_http_resp_error, get_string_to_sign
 from .sigv4 import sign_request_v4, hash_payload, get_timestamp
 from os import environ, fstat
@@ -28,6 +28,19 @@ if environ.get('S3LIB_DEBUG'):
         stream=stderr
     )
     logger.setLevel(DEBUG)
+
+
+class PutResult(TypedDict):
+    """
+    Result of a successful put_object2() call.
+
+    etag:       ETag of the stored object (use with if_match for consistency checks)
+    version_id: Version ID if bucket versioning is enabled, otherwise None
+    checksum:   Server-confirmed checksum value if one was sent, otherwise None
+    """
+    etag: str
+    version_id: str | None
+    checksum: str | None
 
 
 class ConnectionLifecycleError(Exception):
@@ -428,78 +441,93 @@ class Connection:
             etag = dict(headers_resp)['etag'].strip('"')  # Remove quotes
             conn.put_object(bucket, key, new_data, if_match=etag)
         """
-        if headers is None:
-            headers = dict()
-        else:
-            headers = dict(headers)
-
-        # Determine which algorithm to use
-        # Default to SHA256 for str/bytes if no algorithm specified (best effort, no error)
-        user_requested_algo = checksum_algorithm is not None
-        if checksum_algorithm is None and isinstance(data, (str, bytes)):
-            checksum_algorithm = "SHA256"
-
-        # Handle modern checksum headers
-        if checksum_algorithm:
-            # If SHA256 and we already have the hint, reuse it
-            if checksum_algorithm == "SHA256" and sha256_hint is not None:
-                # We have the digest as bytes, convert to base64 for checksum header
-                checksum_value = (
-                    b2a_base64(sha256_hint).strip().decode("ascii")
-                )
-            else:
-                # Need to calculate checksum
-                checksum_value = calculate_checksum_if_possible(
-                    data, checksum_algorithm
-                )
-
-                if not checksum_value:
-                    # If user explicitly requested algorithm, must succeed or error
-                    if user_requested_algo:
-                        raise ValueError(
-                            f"Cannot calculate {checksum_algorithm} checksum for streaming data. "
-                            "Provide sha256_hint or use str/bytes data."
-                        )
-                    # Otherwise (default algorithm), silently skip checksumming
-                    else:
-                        checksum_algorithm = None
-
-                # Special case: if calculating SHA256 and we don't have the hint yet,
-                # calculate it once and reuse for signature
-                if (
-                    checksum_value
-                    and checksum_algorithm == "SHA256"
-                    and sha256_hint is None
-                ):
-                    if isinstance(data, str):
-                        data_bytes = data.encode("utf-8")
-                    elif isinstance(data, bytes):
-                        data_bytes = data
-                    else:
-                        data_bytes = None
-
-                    if data_bytes is not None:
-                        from hashlib import sha256
-
-                        sha256_hint = sha256(data_bytes).digest()
-
-            # Add modern checksum headers only if we successfully calculated
-            if checksum_algorithm and checksum_value:
-                headers["x-amz-checksum-algorithm"] = checksum_algorithm
-                headers[f"x-amz-checksum-{checksum_algorithm.lower()}"] = checksum_value
-
-        # Handle conditional headers
-        if if_none_match:
-            headers["If-None-Match"] = "*"
-        if if_match:
-            headers["If-Match"] = f'"{if_match}"'
-
-        # Call existing implementation (which calls _s3_put_request)
-        # Pass sha256_hint for signature optimization
-        (status, resp_headers) = self._s3_put_request(
-            bucket, key, data, headers, sha256_hint=sha256_hint
+        return self._s3_put_request(
+            bucket, key, data,
+            sha256_hint=sha256_hint,
+            checksum_algorithm=checksum_algorithm,
+            if_none_match=if_none_match,
+            if_match=if_match,
+            extra_headers=headers,
         )
-        return (status, resp_headers)
+
+    def put_object2(
+        self,
+        bucket: str,
+        key: str,
+        data,
+        sha256_hint: bytes | None = None,
+        checksum_algorithm: str | None = None,
+        if_none_match: bool = False,
+        if_match: str | None = None,
+    ) -> PutResult:
+        """
+        Upload an object, returning a PutResult with fields useful for consistency checks.
+
+        Unlike put_object(), this method extracts the meaningful fields from the
+        HTTP response so the caller never has to parse headers.
+
+        Args:
+            bucket: S3 bucket name
+            key: Object key
+            data: Data to upload (str, bytes, or file object)
+            sha256_hint: Pre-calculated SHA256 digest as bytes to skip recalculation
+            checksum_algorithm: 'SHA256', 'SHA1', 'MD5', or None. Defaults to 'SHA256'
+                                for str/bytes data.
+            if_none_match: If True, only upload if object does not already exist
+            if_match: ETag (without quotes) — only upload if current ETag matches
+
+        Returns:
+            PutResult with:
+                etag:       ETag of the stored object — use with if_match on future
+                            get_object2/put_object2 calls for consistency checks
+                version_id: Version ID if bucket versioning is enabled, otherwise None
+                checksum:   Server-confirmed checksum if one was sent, otherwise None
+
+        Raises:
+            ValueError: If checksum calculation was requested but not possible
+            ValueError: On any unexpected HTTP response status
+
+        Examples:
+            # Basic upload
+            result = conn.put_object2(bucket, key, b"data")
+            print(result['etag'])
+
+            # Write then read with consistency check
+            result = conn.put_object2(bucket, key, b"data")
+            stream, headers = conn.get_object2(bucket, key, if_match=result['etag'])
+            if stream is None:
+                raise RuntimeError("object was modified between write and read")
+
+            # Create-only (prevent overwrites)
+            result = conn.put_object2(bucket, key, data, if_none_match=True)
+
+            # Optimistic locking
+            result = conn.put_object2(bucket, key, new_data, if_match=old_etag)
+        """
+        _, resp_headers = self._s3_put_request(
+            bucket, key, data,
+            sha256_hint=sha256_hint,
+            checksum_algorithm=checksum_algorithm,
+            if_none_match=if_none_match,
+            if_match=if_match,
+        )
+        h = dict(resp_headers)
+
+        # Strip surrounding quotes S3 wraps ETags in
+        etag = h.get('etag', '').strip('"')
+
+        # checksum confirmation — S3 echoes back whichever algorithm was used
+        checksum = (
+            h.get('x-amz-checksum-sha256') or
+            h.get('x-amz-checksum-sha1') or
+            h.get('x-amz-checksum-md5')
+        )
+
+        return PutResult(
+            etag=etag,
+            version_id=h.get('x-amz-version-id'),
+            checksum=checksum,
+        )
 
     ##########################
     # Http request Functions #
@@ -643,29 +671,74 @@ class Connection:
         return (resp.status, resp.getheaders())
 
     def _s3_put_request(
-        self, bucket, key, data, headers, sha256_hint=None, md5_hint=None
-    ):
+        self,
+        bucket: str,
+        key: str,
+        data,
+        sha256_hint: bytes | None = None,
+        checksum_algorithm: str | None = None,
+        if_none_match: bool = False,
+        if_match: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        md5_hint=None,
+    ) -> Tuple[int, list]:
         """
-        Mid-level PUT request handler.
+        Execute a PUT request against S3, handling all header construction and
+        checksum logic.
 
-        Args:
-            bucket: S3 bucket name
-            key: Object key
-            data: Data to upload (str, bytes, or file-like object)
-            headers: Request headers dict
-            sha256_hint: Optional pre-calculated SHA256 digest as bytes.
-                         Passed through to _s3_request.
-            md5_hint: Optional pre-calculated MD5 digest as bytes.
-                      Passed through to _s3_request.
+        Returns:
+            (status, resp_headers)
+
+        Raises:
+            ValueError: If checksum calculation requested but not possible for streaming data
         """
-        args = {}
+        headers: dict[str, str] = dict(extra_headers) if extra_headers else {}
+
+        # Determine which checksum algorithm to use.
+        # Default to SHA256 for str/bytes — best effort, no error if not possible.
+        user_requested_algo = checksum_algorithm is not None
+        if checksum_algorithm is None and isinstance(data, (str, bytes)):
+            checksum_algorithm = "SHA256"
+
+        if checksum_algorithm:
+            if checksum_algorithm == "SHA256" and sha256_hint is not None:
+                # Reuse pre-computed digest — convert bytes to base64
+                checksum_value = b2a_base64(sha256_hint).strip().decode("ascii")
+            else:
+                checksum_value = calculate_checksum_if_possible(data, checksum_algorithm)
+                if not checksum_value:
+                    if user_requested_algo:
+                        raise ValueError(
+                            f"Cannot calculate {checksum_algorithm} checksum for streaming data. "
+                            "Provide sha256_hint or use str/bytes data."
+                        )
+                    else:
+                        checksum_algorithm = None
+
+                # Derive sha256_hint from data so _s3_request can reuse it for signing
+                if checksum_value and checksum_algorithm == "SHA256" and sha256_hint is None:
+                    if isinstance(data, (str, bytes)):
+                        from hashlib import sha256 as _sha256
+                        data_bytes = data.encode("utf-8") if isinstance(data, str) else data
+                        sha256_hint = _sha256(data_bytes).digest()
+
+            if checksum_algorithm and checksum_value:
+                headers["x-amz-checksum-algorithm"] = checksum_algorithm
+                headers[f"x-amz-checksum-{checksum_algorithm.lower()}"] = checksum_value
+
+        # Conditional request headers
+        if if_none_match:
+            headers["If-None-Match"] = "*"
+        if if_match:
+            headers["If-Match"] = f'"{if_match}"'
+
+        # Determine content-length
         if isinstance(data, (str, bytes)):
             content_length = len(data)
         elif hasattr(data, "fileno"):
             fileno = data.fileno()
             filestat = fstat(fileno)
             if S_ISREG(filestat.st_mode):
-                # Regular file
                 content_length = filestat[ST_SIZE]
             else:
                 # Special file, size won't be valid. Lets read the data to get value.
@@ -680,13 +753,9 @@ class Connection:
         else:
             raise TypeError(f"Cannot determine content-length of type {type(data)}")
         headers["content-length"] = content_length
+
         resp = self._s3_request(
-            "PUT",
-            bucket,
-            key,
-            args,
-            headers,
-            data,
+            "PUT", bucket, key, {}, headers, data,
             sha256_hint=sha256_hint,
             md5_hint=md5_hint,
         )
