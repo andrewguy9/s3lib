@@ -92,6 +92,28 @@ class S3ByteStream:
 
 
 class Connection:
+    """
+    An S3 connection for making requests against a single endpoint.
+
+    Accepts connection configuration and exposes high-level Pythonic methods
+    for S3 operations — no HTTP knowledge required.
+
+    Connection is a context manager. On entry, the connection is prepared for
+    use. On exit, the underlying socket is closed and all resources are
+    released. Always use Connection as a context manager to ensure clean
+    resource cleanup:
+
+        with Connection(access_id, secret) as conn:
+            result = conn.put_object2(bucket, key, data)
+            stream, headers = conn.get_object2(bucket, key)
+            with stream:
+                data = stream.read()
+
+    Connections can be reused across multiple requests. Once a request's
+    response payload has been fully consumed, the connection is ready for
+    the next request. Use is_ready() to check before reusing.
+    """
+
     def __init__(
         self,
         access_id: str,
@@ -134,10 +156,12 @@ class Connection:
         self._redirects = 0   # Number of S3 redirects (301/307) encountered
 
     def __enter__(self):
+        """Prepare the connection for use. Returns self."""
         self._connect()
         return self
 
     def __exit__(self, type, value, traceback):
+        """Close the connection and release all resources."""
         self._disconnect()
 
     def stats(self):
@@ -159,6 +183,21 @@ class Connection:
             'requests': self._requests,
             'redirects': self._redirects,
         }
+
+    def is_ready(self) -> bool:
+        """
+        Returns True if this connection is ready to accept a new request.
+
+        A connection is ready when it has no outstanding response payload
+        waiting to be consumed. It does not need an open socket — the
+        connection will be established automatically on the next request.
+
+        Use this to check whether a connection can be reused:
+
+            if conn.is_ready():
+                stream, headers = conn.get_object2(bucket, key)
+        """
+        raise NotImplementedError("is_ready() is not yet implemented")
 
     #######################
     # Interface Functions #
