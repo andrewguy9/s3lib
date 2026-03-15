@@ -257,11 +257,6 @@ class ConnectionPool:
             use_ssl=self.use_ssl
         )
 
-        # TODO: remove conn._connect() once lazy connect is implemented.
-        # The pool should not need to call this — the connection will
-        # establish its socket on the first request automatically.
-        conn._connect()
-
         self._all_connections.add(conn)
         self._in_use.add(conn)
 
@@ -281,11 +276,7 @@ class ConnectionPool:
             bool: True if connection is ready for a new request
         """
         try:
-            # Check if connection has valid HTTPConnection with open socket
-            # TODO: replace with conn.is_ready() once implemented
-            return (conn.conn is not None and
-                    hasattr(conn.conn, 'sock') and
-                    conn.conn.sock is not None)
+            return conn.is_ready()
         except Exception:
             return False
 

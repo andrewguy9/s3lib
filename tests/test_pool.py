@@ -227,33 +227,29 @@ def test_pool_close_idempotent():
 
 
 def test_pool_invalid_connection_discarded():
-    """Test that invalid connections are discarded."""
+    """Test that connections with unexhausted responses are discarded on return."""
     pool = ConnectionPool(access_id="test", secret=b"secret")
 
     import unittest.mock as mock
 
     with mock.patch('s3lib.Connection') as MockConnection:
-        # Create mock connection
+        # First connection: not ready (outstanding unexhausted response)
         mock_conn = mock.Mock()
-        mock_conn.conn = None  # Invalid connection (no socket)
+        mock_conn.is_ready.return_value = False
         MockConnection.return_value = mock_conn
 
-        # First lease - creates connection
         with pool.lease() as conn:
             pass
 
-        # Connection should be returned but invalid
-        # Next lease should create new connection (old one discarded)
+        # Connection returned but not ready — should be discarded.
+        # Next lease should create a new connection.
         mock_conn2 = mock.Mock()
-        mock_conn2.conn = mock.Mock()
-        mock_conn2.conn.sock = mock.Mock()
+        mock_conn2.is_ready.return_value = True
         MockConnection.return_value = mock_conn2
 
         with pool.lease() as conn:
             pass
 
-        # Should have tried to create 2 connections
-        # (first one discarded as invalid)
         assert MockConnection.call_count == 2
 
     pool.close()

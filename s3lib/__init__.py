@@ -157,7 +157,6 @@ class Connection:
 
     def __enter__(self):
         """Prepare the connection for use. Returns self."""
-        self._connect()
         return self
 
     def __exit__(self, type, value, traceback):
@@ -197,7 +196,9 @@ class Connection:
             if conn.is_ready():
                 stream, headers = conn.get_object2(bucket, key)
         """
-        raise NotImplementedError("is_ready() is not yet implemented")
+        if self._outstanding_response is None:
+            return True
+        return self._is_response_consumed(self._outstanding_response)
 
     #######################
     # Interface Functions #
