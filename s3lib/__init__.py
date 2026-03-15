@@ -35,6 +35,49 @@ class ConnectionLifecycleError(Exception):
     pass
 
 
+class S3ByteStream:
+    """
+    A streaming byte source wrapping an S3 HTTP response.
+
+    Returned by get_object2() when data is available. Supports incremental
+    reading via read() and should be used as a context manager.
+
+    Connection hygiene on __exit__:
+      - If the stream was fully exhausted by read(), the HTTP connection is
+        already clean and remains open for reuse (keep-alive).
+      - If the stream was not fully consumed (early exit), the underlying
+        response is closed, triggering a reconnect on the next request.
+        This avoids draining potentially large amounts of unwanted data.
+
+    Usage:
+        stream, headers = conn.get_object2(bucket, key)
+        if stream is not None:
+            with stream:
+                while chunk := stream.read(65536):
+                    process(chunk)
+    """
+
+    def __init__(self, response: HTTPResponse):
+        self._response = response
+        self._exhausted = False
+
+    def read(self, size: int = -1) -> bytes:
+        buf = self._response.read(size)
+        if not buf:
+            self._exhausted = True
+        return buf
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if not self._exhausted:
+            # Not fully consumed — close to avoid draining a potentially large body.
+            # The connection will reconnect on the next request.
+            self._response.close()
+        return False
+
+
 class Connection:
     def __init__(
         self,
@@ -242,6 +285,102 @@ class Connection:
             )
 
         return response
+
+    def get_object2(
+            self,
+            bucket: str,
+            key: str,
+            if_match: str | None = None,
+            if_none_match: str | None = None,
+            byte_range: Tuple[int | None, int | None] | None = None,
+    ) -> Tuple['S3ByteStream', dict[str, str]] | Tuple[None, dict[str, str]]:
+        """
+        Fetch an S3 object, returning a stream and headers.
+
+        Unlike get_object(), this method hides all HTTP complexity. The caller
+        receives either a stream to read from, or None if the server returned
+        no body.
+
+        Args:
+            bucket: S3 bucket name
+            key: Object key
+            if_match: ETag (without quotes) — if the object's ETag no longer
+                      matches, returns (None, headers) with the server's 412 response
+            if_none_match: ETag (without quotes) — if the object is unchanged,
+                           returns (None, headers) with the server's 304 response
+            byte_range: (start, end) byte positions, inclusive, 0-based. Either
+                        can be None for "from start" or "to end".
+
+        Returns:
+            (S3ByteStream, headers) — data is available. Caller MUST always use
+                the stream as a context manager. If the stream is fully consumed,
+                the underlying connection may be reused. If the stream is not fully
+                consumed, the connection will be force-closed on exit, preventing reuse.
+            (None, headers) — no body. Either:
+                - 304: if_none_match matched, object unchanged
+                - 412: if_match failed, object has changed
+
+        Raises:
+            ValueError: On any unexpected HTTP response status
+
+        Examples:
+            # Basic streaming download — always use as context manager
+            stream, headers = conn.get_object2(bucket, key)
+            with stream:
+                while chunk := stream.read(65536):
+                    process(chunk)
+
+            # Caching — skip download if unchanged
+            stream, headers = conn.get_object2(bucket, key, if_none_match=cached_etag)
+            if stream is None:
+                use_cache()  # 304 — object unchanged
+            else:
+                with stream:
+                    data = stream.read()
+
+            # Optimistic read — caller decides if 412 is an error
+            stream, headers = conn.get_object2(bucket, key, if_match=expected_etag)
+            if stream is None:
+                handle_changed()  # 412 — object has changed, no data returned
+            else:
+                with stream:
+                    data = stream.read()
+
+            # Byte range fetch
+            stream, headers = conn.get_object2(bucket, key, byte_range=(0, 1023))
+            with stream:
+                header_bytes = stream.read()
+        """
+        headers: dict[str, str] = {}
+
+        if if_match:
+            headers["If-Match"] = f'"{if_match}"'
+        if if_none_match:
+            headers["If-None-Match"] = f'"{if_none_match}"'
+
+        if byte_range is not None:
+            start, end = byte_range
+            start_str = "" if start is None else str(start)
+            end_str = "" if end is None else str(end)
+            headers["Range"] = f"bytes={start_str}-{end_str}"
+
+        expected_success = 206 if byte_range is not None else 200
+        conditional_responses = (304, 412)
+
+        response = self._s3_get_request(bucket, key, headers)
+        resp_headers = dict(response.getheaders())
+
+        if response.status in conditional_responses:
+            # No body — consume the empty response to keep the connection clean.
+            response.read()
+            return (None, resp_headers)
+
+        if response.status != expected_success:
+            raise ValueError(
+                f"Expected HTTP {expected_success} but got {response.status}."
+            )
+
+        return (S3ByteStream(response), resp_headers)
 
     def get_object_url(self, bucket: str, key: str, proto="https") -> str:
         """get a public url for the object in the bucket."""

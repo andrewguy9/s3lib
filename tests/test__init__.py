@@ -214,6 +214,125 @@ def test_get_object_no_range_header_when_omitted():
     assert "Range" not in captured_headers
 
 
+def test_get_object2_returns_stream_on_success():
+    """200 response returns (S3ByteStream, headers)."""
+    import unittest.mock as mock
+
+    conn = s3lib.Connection("someaccess", b"somesecret")
+
+    mock_resp = mock.Mock()
+    mock_resp.status = 200
+    mock_resp.getheaders.return_value = [("content-type", "application/octet-stream")]
+    mock_resp.read.side_effect = [b"hello", b""]
+
+    conn._s3_get_request = lambda bucket, key, headers: mock_resp
+
+    stream, headers = conn.get_object2("bucket", "key")
+    assert isinstance(stream, s3lib.S3ByteStream)
+    assert headers == {"content-type": "application/octet-stream"}
+    with stream:
+        assert stream.read() == b"hello"
+
+
+def test_get_object2_returns_none_on_304():
+    """304 response returns (None, headers) and consumes the empty body."""
+    import unittest.mock as mock
+
+    conn = s3lib.Connection("someaccess", b"somesecret")
+
+    mock_resp = mock.Mock()
+    mock_resp.status = 304
+    mock_resp.getheaders.return_value = [("etag", '"abc123"')]
+    mock_resp.read.return_value = b""
+
+    conn._s3_get_request = lambda bucket, key, headers: mock_resp
+
+    stream, headers = conn.get_object2("bucket", "key", if_none_match="abc123")
+    assert stream is None
+    assert headers == {"etag": '"abc123"'}
+    mock_resp.read.assert_called_once()  # body was consumed internally
+
+
+def test_get_object2_returns_none_on_412():
+    """412 response returns (None, headers) and consumes the empty body."""
+    import unittest.mock as mock
+
+    conn = s3lib.Connection("someaccess", b"somesecret")
+
+    mock_resp = mock.Mock()
+    mock_resp.status = 412
+    mock_resp.getheaders.return_value = [("etag", '"xyz999"')]
+    mock_resp.read.return_value = b""
+
+    conn._s3_get_request = lambda bucket, key, headers: mock_resp
+
+    stream, headers = conn.get_object2("bucket", "key", if_match="abc123")
+    assert stream is None
+    assert headers == {"etag": '"xyz999"'}
+    mock_resp.read.assert_called_once()
+
+
+def test_get_object2_stream_exhausted_does_not_close():
+    """Fully consuming the stream leaves the response open (connection reusable)."""
+    import unittest.mock as mock
+
+    conn = s3lib.Connection("someaccess", b"somesecret")
+
+    mock_resp = mock.Mock()
+    mock_resp.status = 200
+    mock_resp.getheaders.return_value = []
+    mock_resp.read.side_effect = [b"data", b""]
+
+    conn._s3_get_request = lambda bucket, key, headers: mock_resp
+
+    stream, _ = conn.get_object2("bucket", "key")
+    with stream:
+        stream.read(-1)  # exhausts the stream
+        stream.read(-1)  # triggers exhausted flag
+
+    mock_resp.close.assert_not_called()
+
+
+def test_get_object2_stream_early_exit_closes():
+    """Exiting the context manager without exhausting the stream force-closes it."""
+    import unittest.mock as mock
+
+    conn = s3lib.Connection("someaccess", b"somesecret")
+
+    mock_resp = mock.Mock()
+    mock_resp.status = 200
+    mock_resp.getheaders.return_value = []
+    mock_resp.read.return_value = b"some data"
+
+    conn._s3_get_request = lambda bucket, key, headers: mock_resp
+
+    stream, _ = conn.get_object2("bucket", "key")
+    with stream:
+        pass  # exit without reading
+
+    mock_resp.close.assert_called_once()
+
+
+def test_get_object2_206_on_byte_range():
+    """byte_range request expects 206 and returns a stream."""
+    import unittest.mock as mock
+
+    conn = s3lib.Connection("someaccess", b"somesecret")
+
+    mock_resp = mock.Mock()
+    mock_resp.status = 206
+    mock_resp.getheaders.return_value = [("content-range", "bytes 0-499/1000")]
+    mock_resp.read.side_effect = [b"x" * 500, b""]
+
+    conn._s3_get_request = lambda bucket, key, headers: mock_resp
+
+    stream, headers = conn.get_object2("bucket", "key", byte_range=(0, 499))
+    assert isinstance(stream, s3lib.S3ByteStream)
+    with stream:
+        data = stream.read()
+    assert len(data) == 500
+
+
 def test_automatic_region_discovery():
     """
     Test that regions are automatically discovered from redirects.
