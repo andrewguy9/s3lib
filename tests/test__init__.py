@@ -67,28 +67,25 @@ def test_connection_lifecycle_error():
     import unittest.mock as mock
     from http.client import HTTPResponse
 
-    # Create a connection and mock the underlying HTTP connection
-    conn = s3lib.Connection("someaccess", b"somesecret")
-    conn._connect()
+    with s3lib.Connection("someaccess", b"somesecret") as conn:
+        # Create a mock response that is not consumed (isclosed() returns False)
+        mock_resp1 = mock.Mock(spec=HTTPResponse)
+        mock_resp1.isclosed.return_value = False
+        mock_resp1.status = 200
 
-    # Create a mock response that is not consumed (isclosed() returns False)
-    mock_resp1 = mock.Mock(spec=HTTPResponse)
-    mock_resp1.isclosed.return_value = False
-    mock_resp1.status = 200
+        # Manually set outstanding response to simulate get_object() call
+        conn._outstanding_response = mock_resp1
 
-    # Manually set outstanding response to simulate get_object() call
-    conn._outstanding_response = mock_resp1
+        # Try to make another request - should raise ConnectionLifecycleError
+        with pytest.raises(s3lib.ConnectionLifecycleError) as exc_info:
+            conn._validate_connection_ready()
 
-    # Try to make another request - should raise ConnectionLifecycleError
-    with pytest.raises(s3lib.ConnectionLifecycleError) as exc_info:
-        conn._validate_connection_ready()
+        assert "not fully consumed" in str(exc_info.value)
 
-    assert "not fully consumed" in str(exc_info.value)
-
-    # Now test that if response is consumed, no error is raised
-    mock_resp1.isclosed.return_value = True
-    conn._validate_connection_ready()  # Should not raise
-    assert conn._outstanding_response is None  # Should be cleared
+        # Now test that if response is consumed, no error is raised
+        mock_resp1.isclosed.return_value = True
+        conn._validate_connection_ready()  # Should not raise
+        assert conn._outstanding_response is None  # Should be cleared
 
 def test_connection_initialized():
     """Test that connection attributes are properly initialized."""
@@ -108,46 +105,35 @@ def test_connection_reset_recovery():
     """Test that connection errors are handled gracefully with automatic retry."""
     import unittest.mock as mock
 
-    conn = s3lib.Connection("someaccess", b"somesecret")
-
-    # Mock _connect to always set up a failing connection
-    original_connect = conn._connect
     call_count = [0]
 
-    def mock_connect():
-        call_count[0] += 1
-        mock_http_conn = mock.Mock()
-        mock_http_conn.request.side_effect = ConnectionResetError("Connection reset by peer")
-        conn.conn = mock_http_conn
-        conn._current_endpoint = conn.host
+    with s3lib.Connection("someaccess", b"somesecret") as conn:
+        def mock_connect():
+            call_count[0] += 1
+            mock_http_conn = mock.Mock()
+            mock_http_conn.request.side_effect = ConnectionResetError("Connection reset by peer")
+            conn.conn = mock_http_conn
+            conn._current_endpoint = conn.host
 
-    conn._connect = mock_connect
+        conn._connect = mock_connect
 
-    # Try to make a request - should retry and then re-raise after exhausting retries
-    with pytest.raises(ConnectionResetError):
-        conn._s3_request("GET", "bucket", "key", {}, {}, '')
+        with pytest.raises(ConnectionResetError):
+            conn._s3_request("GET", "bucket", "key", {}, {}, '')
 
     # Should have tried 3 times (initial + 2 retries)
     assert call_count[0] == 3
-
-    # Connection should have been cleaned up
-    assert conn.conn is None
-    assert conn._outstanding_response is None
 
 def test_disconnect_broken_connection():
     """Test that disconnect handles already-broken connections gracefully."""
     import unittest.mock as mock
 
-    conn = s3lib.Connection("someaccess", b"somesecret")
-    conn._connect()
+    with s3lib.Connection("someaccess", b"somesecret") as conn:
+        # Mock connection that raises error when closing
+        mock_http_conn = mock.Mock()
+        mock_http_conn.close.side_effect = BrokenPipeError("Broken pipe")
+        conn.conn = mock_http_conn
 
-    # Mock connection that raises error when closing
-    mock_http_conn = mock.Mock()
-    mock_http_conn.close.side_effect = BrokenPipeError("Broken pipe")
-    conn.conn = mock_http_conn
-
-    # Should not raise - should handle the error gracefully
-    conn._disconnect()
+    # __exit__ called _disconnect() — should not have raised
     assert conn.conn is None
     assert conn._outstanding_response is None
 

@@ -37,17 +37,21 @@ class ConnectionLease:
 
     def __enter__(self):
         """
-        Enter context: return the wrapped connection.
+        Enter context: activate and return the wrapped connection.
 
         Returns:
             Connection: The leased connection for use
         """
         self._entered = True
+        self._connection.__enter__()
         return self._connection
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """
-        Exit context: return connection to pool.
+        Exit context: deactivate and return connection to pool.
+
+        Clears the connection's entered state without closing the socket —
+        the pool manages the socket lifecycle, not the connection itself.
 
         Always returns connection, even on exception.
         Does not suppress exceptions.
@@ -56,6 +60,9 @@ class ConnectionLease:
             False: Don't suppress exceptions
         """
         if self._entered:
+            # Mark the connection as no longer active without closing the socket.
+            # Connection.__exit__ would close the socket, which we don't want here.
+            self._connection._entered = False
             # Return connection to pool (thread-safe)
             self._pool._return_connection(self._connection)
 

@@ -59,7 +59,7 @@ def test_lease_context_manager():
     import unittest.mock as mock
 
     with mock.patch('s3lib.Connection') as MockConnection:
-        mock_conn = mock.Mock()
+        mock_conn = mock.MagicMock()
         mock_conn.conn = mock.Mock()
         mock_conn.conn.sock = mock.Mock()
         MockConnection.return_value = mock_conn
@@ -84,7 +84,7 @@ def test_pool_reuse_connection():
 
     with mock.patch('s3lib.Connection') as MockConnection:
         # Create mock connection
-        mock_conn = mock.Mock()
+        mock_conn = mock.MagicMock()
         mock_conn.conn = mock.Mock()
         mock_conn.conn.sock = mock.Mock()
         MockConnection.return_value = mock_conn
@@ -121,7 +121,7 @@ def test_pool_max_connections():
     with mock.patch('s3lib.Connection') as MockConnection:
         # Create mock connections
         def create_mock_conn():
-            mock_conn = mock.Mock()
+            mock_conn = mock.MagicMock()
             mock_conn.conn = mock.Mock()
             mock_conn.conn.sock = mock.Mock()
             return mock_conn
@@ -165,7 +165,7 @@ def test_pool_thread_safety():
 
     with mock.patch('s3lib.Connection') as MockConnection:
         def create_mock_conn():
-            mock_conn = mock.Mock()
+            mock_conn = mock.MagicMock()
             mock_conn.conn = mock.Mock()
             mock_conn.conn.sock = mock.Mock()
             return mock_conn
@@ -234,7 +234,7 @@ def test_pool_invalid_connection_discarded():
 
     with mock.patch('s3lib.Connection') as MockConnection:
         # First connection: not ready (outstanding unexhausted response)
-        mock_conn = mock.Mock()
+        mock_conn = mock.MagicMock()
         mock_conn.is_ready.return_value = False
         MockConnection.return_value = mock_conn
 
@@ -243,7 +243,7 @@ def test_pool_invalid_connection_discarded():
 
         # Connection returned but not ready — should be discarded.
         # Next lease should create a new connection.
-        mock_conn2 = mock.Mock()
+        mock_conn2 = mock.MagicMock()
         mock_conn2.is_ready.return_value = True
         MockConnection.return_value = mock_conn2
 
@@ -281,7 +281,7 @@ def test_lease_returns_on_exception():
     import unittest.mock as mock
 
     with mock.patch('s3lib.Connection') as MockConnection:
-        mock_conn = mock.Mock()
+        mock_conn = mock.MagicMock()
         mock_conn.conn = mock.Mock()
         mock_conn.conn.sock = mock.Mock()
         MockConnection.return_value = mock_conn

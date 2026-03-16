@@ -144,6 +144,7 @@ class Connection:
         self.host = host or "s3.amazonaws.com"
         self.conn_timeout = conn_timeout if conn_timeout is not None else 4
         self.conn = None
+        self._entered = False
         self._outstanding_response = None
         self._server_requested_close = False
         # Default region: env var > us-east-1 (matches boto3 behavior)
@@ -156,11 +157,13 @@ class Connection:
         self._redirects = 0   # Number of S3 redirects (301/307) encountered
 
     def __enter__(self):
-        """Prepare the connection for use. Returns self."""
+        """Activate the connection for use. Must be called before making requests."""
+        self._entered = True
         return self
 
     def __exit__(self, type, value, traceback):
         """Close the connection and release all resources."""
+        self._entered = False
         self._disconnect()
 
     def stats(self):
@@ -1178,8 +1181,14 @@ class Connection:
     def _validate_connection_ready(self):
         """
         Ensure connection is in a valid state for a new request.
-        Raises ConnectionLifecycleError if a previous response hasn't been consumed.
+        Raises ConnectionLifecycleError if used outside a context manager or
+        if a previous response hasn't been consumed.
         """
+        if not self._entered:
+            raise ConnectionLifecycleError(
+                "Connection must be used as a context manager. "
+                "Use 'with Connection(...) as conn:' before making requests."
+            )
         if self._outstanding_response is not None:
             if not self._is_response_consumed(self._outstanding_response):
                 raise ConnectionLifecycleError(
