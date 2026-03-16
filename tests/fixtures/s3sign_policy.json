@@ -1,0 +1,16 @@
+{ "expiration": "2015-12-30T12:00:00.000Z",\r
+  "conditions": [\r
+    {"bucket": "sigv4examplebucket"},\r
+    ["starts-with", "$key", "user/user1/"],\r
+    {"acl": "public-read"},\r
+    {"success_action_redirect": "http://sigv4examplebucket.s3.amazonaws.com/successful_upload.html"},\r
+    ["starts-with", "$Content-Type", "image/"],\r
+    {"x-amz-meta-uuid": "14365123651274"},\r
+    {"x-amz-server-side-encryption": "AES256"},\r
+    ["starts-with", "$x-amz-meta-tag", ""],\r
+\r
+    {"x-amz-credential": "AKIAIOSFODNN7EXAMPLE/20151229/us-east-1/s3/aws4_request"},\r
+    {"x-amz-algorithm": "AWS4-HMAC-SHA256"},\r
+    {"x-amz-date": "20151229T000000Z" }\r
+  ]\r
+}
