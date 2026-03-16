@@ -5,16 +5,18 @@ from hmac import new as hmac_new
 from http.client import HTTPConnection, HTTPSConnection, HTTPException, HTTPResponse, NO_CONTENT, OK, RemoteDisconnected
 import ssl
 from logging import basicConfig as logging_basicConfig, DEBUG, getLogger
-from typing import Generator, Iterable, List, Optional, Tuple, TypedDict, Union
-from .utils import batchify, raise_http_resp_error, get_string_to_sign
+from typing import Generator, Iterable, Optional, Tuple, TypedDict, Union
+from .utils import batchify, raise_http_resp_error
 from .sigv4 import sign_request_v4, hash_payload, get_timestamp
 from os import environ, fstat
 from urllib.parse import quote
 from stat import S_ISREG, ST_SIZE
 from sys import stderr
-from time import gmtime, strftime, time
+from time import time
 from xml.etree.ElementTree import fromstring as parse
 from xml.etree.ElementTree import Element, SubElement, tostring
+
+from .pool import ConnectionPool, ConnectionLease  # noqa: F401
 
 # Configure module-level logger
 logger = getLogger(__name__)
@@ -118,7 +120,7 @@ class Connection:
         self,
         access_id: str,
         secret: bytes,
-        host: str | None =None,
+        host: str | None = None,
         port: int | None = None,
         conn_timeout: float | None = None,
         region: str | None = None,
@@ -240,7 +242,7 @@ class Connection:
             bucket: str,
             start: str | None = None,
             prefix: str | None = None,
-            batch_size: int | None =    None):
+            batch_size: int | None = None):
         """List contents of individual bucket."""
         for obj in self.list_bucket2(bucket, start, prefix, batch_size):
             yield obj[LIST_BUCKET_KEY]
@@ -417,7 +419,13 @@ class Connection:
             for key, result in results:
                 yield key, result
 
-    def copy_object(self, src_bucket: str, src_key: str, dst_bucket: str, dst_key: str, headers: dict[str, str] | None = None) -> Tuple[int, dict[str, str]]:
+    def copy_object(self,
+                    src_bucket: str,
+                    src_key: str,
+                    dst_bucket: str,
+                    dst_key: str,
+                    headers: dict[str, str] | None = None
+                    ) -> Tuple[int, dict[str, str]]:
         """copy key from one bucket to another"""
         if headers is None:
             headers = dict()
@@ -437,8 +445,8 @@ class Connection:
         headers: dict[str, str] | None = None,
         sha256_hint: bytes | None = None,
         checksum_algorithm: str | None = None,
-        if_none_match = False,
-        if_match = None,
+        if_none_match: bool = False,
+        if_match: str | None = None,
     ):
         """
         Push object from local to bucket with optional integrity and conditional checks.
@@ -840,8 +848,6 @@ class Connection:
         # Validate that previous response was consumed before making a new request
         self._validate_connection_ready()
 
-        http_now = strftime("%a, %d %b %Y %H:%M:%S +0000", gmtime())
-
         # Use cached region for this bucket if available
         if bucket and bucket in self._bucket_regions:
             self.region = self._bucket_regions[bucket]
@@ -1075,7 +1081,9 @@ class Connection:
                 elif isinstance(content, str):
                     content_info = f"string ({len(content)} chars)"
 
-            logger.debug("Starting %s request to %s, content: %s, socket: %s", method, resource, content_info, sock_info)
+            logger.debug(
+                "Starting %s request to %s, content: %s, socket: %s",
+                method, resource, content_info, sock_info)
             logger.debug("Request headers: %s", dict(headers))
 
             # Log file position before request if it's a file
@@ -1111,7 +1119,10 @@ class Connection:
             if logger.isEnabledFor(DEBUG) and file_pos_before is not None and hasattr(content, 'tell'):
                 try:
                     file_pos_after = content.tell()
-                    logger.debug("File position after request: %s (read %s bytes)", file_pos_after, file_pos_after - file_pos_before)
+                    logger.debug(
+                        "File position after request: %s (read %s bytes)",
+                        file_pos_after, file_pos_after - file_pos_before
+                    )
                 except Exception:
                     pass
 
@@ -1130,8 +1141,10 @@ class Connection:
             if logger.isEnabledFor(DEBUG):
                 total_duration = time() - request_start
                 sock_info_after = get_sock_info()
-                logger.debug("Request completed in %.2fs (request: %.2fs, getresponse: %.2fs), status: %s, socket: %s",
-                            total_duration, request_call_duration, getresponse_duration, resp.status, sock_info_after)
+                logger.debug(
+                    "Request completed in %.2fs (request: %.2fs, getresponse: %.2fs), status: %s, socket: %s",
+                    total_duration, request_call_duration, getresponse_duration, resp.status, sock_info_after
+                )
         except (
             ConnectionResetError,
             BrokenPipeError,
@@ -1423,15 +1436,18 @@ def _parse_list_response(xml: str) -> Tuple[list[dict[str, str | None]], str | N
     return (items, next_token)
 
 
+API_VERSION = "http://s3.amazonaws.com/doc/2006-03-01/"
+
+
 def _parse_get_service_response(xml: str) -> list[str]:
-    bucket_path = "{http://s3.amazonaws.com/doc/2006-03-01/}Buckets/{http://s3.amazonaws.com/doc/2006-03-01/}Bucket/{http://s3.amazonaws.com/doc/2006-03-01/}Name"
+    bucket_path = f"{{{API_VERSION}}}Buckets/{{{API_VERSION}}}Bucket/{{{API_VERSION}}}Name"
     tree = parse(xml)
     buckets = tree.findall(bucket_path)
     names = [str(b.text) for b in buckets]
     return names
 
 
-KEY_PATH = "{http://s3.amazonaws.com/doc/2006-03-01/}Key"
+KEY_PATH = f"{{{API_VERSION}}}Key"
 
 
 def _tag_normalize(name: str) -> str:
@@ -1474,7 +1490,3 @@ def _calculate_query_arg_str(args: dict[str, str | None]) -> str:
     if args_str:
         args_str = "?" + args_str
     return args_str
-
-
-# Import connection pooling classes
-from .pool import ConnectionPool, ConnectionLease

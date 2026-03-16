@@ -9,7 +9,6 @@ Tests run against multiple buckets to ensure compatibility.
 
 import pytest
 import uuid
-import s3lib
 from s3lib import ConnectionPool
 
 pytestmark = pytest.mark.timeout(30)

@@ -12,7 +12,6 @@ All test examples use the following credentials:
 - Timestamp: 20130524T000000Z
 """
 
-import pytest
 from s3lib.sigv4 import (
     create_canonical_request,
     create_string_to_sign,

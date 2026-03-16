@@ -5,7 +5,7 @@ Tests for ConnectionPool and ConnectionLease.
 import pytest
 import threading
 import time
-from s3lib import ConnectionPool, ConnectionLease, Connection
+from s3lib.pool import ConnectionPool
 
 
 def test_pool_basic_creation():
@@ -17,24 +17,24 @@ def test_pool_basic_creation():
     )
 
     assert pool.max_connections == 5
-    assert pool.closed == False
+    assert pool.closed is False
     assert pool.host == "s3.amazonaws.com"
     assert pool.port == 443  # HTTPS is now the default
 
     pool.close()
-    assert pool.closed == True
+    assert pool.closed is True
 
 
 def test_pool_context_manager():
     """Test pool as context manager."""
     with ConnectionPool(access_id="test", secret=b"secret") as pool:
-        assert pool.closed == False
+        assert pool.closed is False
         stats = pool.stats()
         assert stats['total_connections'] == 0
-        assert stats['closed'] == False
+        assert stats['closed'] is False
 
     # After exiting, pool should be closed
-    assert pool.closed == True
+    assert pool.closed is True
 
 
 def test_pool_stats():
@@ -46,7 +46,7 @@ def test_pool_stats():
     assert stats['available'] == 0
     assert stats['in_use'] == 0
     assert stats['max_connections'] == 3
-    assert stats['closed'] == False
+    assert stats['closed'] is False
 
     pool.close()
 
@@ -130,10 +130,10 @@ def test_pool_max_connections():
 
         # Acquire 2 connections (max limit)
         lease1 = pool.lease()
-        conn1 = lease1.__enter__()
+        lease1.__enter__()
 
         lease2 = pool.lease()
-        conn2 = lease2.__enter__()
+        lease2.__enter__()
 
         # Stats should show 2 in use
         stats = pool.stats()
@@ -143,7 +143,7 @@ def test_pool_max_connections():
 
         # Try to acquire 3rd connection - should timeout
         with pytest.raises(TimeoutError):
-            with pool.lease() as conn3:
+            with pool.lease():
                 pass
 
         # Clean up
@@ -174,9 +174,10 @@ def test_pool_thread_safety():
 
         # Function to run in thread
         results = []
+
         def worker(worker_id):
             for i in range(3):
-                with pool.lease() as conn:
+                with pool.lease():
                     time.sleep(0.01)  # Simulate work
                     results.append((worker_id, i))
 
@@ -209,7 +210,7 @@ def test_pool_closed_raises_error():
 
     # Attempting to lease from closed pool should raise
     with pytest.raises(RuntimeError, match="closed"):
-        with pool.lease() as conn:
+        with pool.lease():
             pass
 
 
@@ -223,7 +224,7 @@ def test_pool_close_idempotent():
     pool.close()
 
     # Should still be closed
-    assert pool.closed == True
+    assert pool.closed is True
 
 
 def test_pool_invalid_connection_discarded():
@@ -238,7 +239,7 @@ def test_pool_invalid_connection_discarded():
         mock_conn.is_ready.return_value = False
         MockConnection.return_value = mock_conn
 
-        with pool.lease() as conn:
+        with pool.lease():
             pass
 
         # Connection returned but not ready — should be discarded.
@@ -247,7 +248,7 @@ def test_pool_invalid_connection_discarded():
         mock_conn2.is_ready.return_value = True
         MockConnection.return_value = mock_conn2
 
-        with pool.lease() as conn:
+        with pool.lease():
             pass
 
         assert MockConnection.call_count == 2
@@ -288,7 +289,7 @@ def test_lease_returns_on_exception():
 
         # Lease with exception
         try:
-            with pool.lease() as conn:
+            with pool.lease():
                 raise ValueError("Test exception")
         except ValueError:
             pass

@@ -222,8 +222,13 @@ def test_s3_request_inner_with_provided_sha256():
 
         # Make request with provided hint (bytes)
         try:
-            conn._s3_request_inner("PUT", "bucket", "key", {}, {}, test_data,
-                                  sha256_hint=sha256_hint)
+            conn._s3_request_inner("PUT",
+                                   "bucket",
+                                   "key",
+                                   {},
+                                   {},
+                                   test_data,
+                                   sha256_hint=sha256_hint)
         except Exception:
             pass  # We expect this might fail due to mocking, but we can check the call
 
@@ -328,7 +333,7 @@ def test_s3_request_inner_with_provided_md5():
         # Make request with provided MD5 hint (bytes)
         try:
             conn._s3_request_inner("PUT", "bucket", "key", {}, {}, test_data,
-                                  md5_hint=md5_hint)
+                                   md5_hint=md5_hint)
         except Exception:
             pass
 
@@ -526,7 +531,6 @@ def test_get_object_with_if_none_match():
 
 def test_put_object_checksum_error_for_streaming():
     """Test put_object raises error for checksum calc on streaming data when explicitly requested."""
-    import unittest.mock as mock
     import s3lib
     import io
 
