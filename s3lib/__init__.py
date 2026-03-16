@@ -5,7 +5,7 @@ from hmac import new as hmac_new
 from http.client import HTTPConnection, HTTPSConnection, HTTPException, HTTPResponse, NO_CONTENT, OK, RemoteDisconnected
 import ssl
 from logging import basicConfig as logging_basicConfig, DEBUG, getLogger
-from typing import Generator, Iterable, List, Tuple, TypedDict
+from typing import Generator, Iterable, List, Optional, Tuple, TypedDict, Union
 from .utils import batchify, raise_http_resp_error, get_string_to_sign
 from .sigv4 import sign_request_v4, hash_payload, get_timestamp
 from os import environ, fstat
@@ -143,14 +143,16 @@ class Connection:
         self.port = port or (443 if use_ssl else 80)
         self.host = host or "s3.amazonaws.com"
         self.conn_timeout = conn_timeout if conn_timeout is not None else 4
-        self.conn = None
+        self.conn: Optional[Union[HTTPConnection, HTTPSConnection]] = None
         self._entered = False
-        self._outstanding_response = None
+        self._outstanding_response: Optional[HTTPResponse] = None
         self._server_requested_close = False
         # Default region: env var > us-east-1 (matches boto3 behavior)
         self.region = region or environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+        self._current_endpoint: Optional[str] = None
+        self._bucket_regions: dict[str, str] = {}
         # Track socket identity even after socket closes
-        self._socket_identity = None  # Will be set to "fd=X local_port=Y" when connected
+        self._socket_identity: Optional[str] = None  # Will be set to "fd=X local_port=Y" when connected
         # Statistics counters for monitoring performance
         self._connects = 0    # Number of TCP connections established
         self._requests = 0    # Number of HTTP requests made
@@ -795,7 +797,7 @@ class Connection:
                 content_length = len(data)
         else:
             raise TypeError(f"Cannot determine content-length of type {type(data)}")
-        headers["content-length"] = content_length
+        headers["content-length"] = str(content_length)
 
         resp = self._s3_request(
             "PUT", bucket, key, {}, headers, data,
@@ -839,9 +841,6 @@ class Connection:
         self._validate_connection_ready()
 
         http_now = strftime("%a, %d %b %Y %H:%M:%S +0000", gmtime())
-        # Initialize bucket region cache if not present
-        if not hasattr(self, "_bucket_regions"):
-            self._bucket_regions = {}
 
         # Use cached region for this bucket if available
         if bucket and bucket in self._bucket_regions:
@@ -946,12 +945,8 @@ class Connection:
                 # This format works for all regions and avoids 301 redirects
                 host = f"{bucket}.s3-{self.region}.amazonaws.com"
                 # Only reconnect if we're not already connected to this endpoint
-                if (
-                    not hasattr(self, "_current_endpoint")
-                    or self._current_endpoint != host
-                ):
-                    if hasattr(self, "conn"):
-                        self._disconnect()
+                if self._current_endpoint != host:
+                    self._disconnect()
                     cls = HTTPSConnection if self.use_ssl else HTTPConnection
                     self.conn = cls(
                         host, self.port, timeout=self.conn_timeout
@@ -1040,12 +1035,14 @@ class Connection:
         request_start = time()
 
         # Helper to get socket info
+        _conn = self.conn
+
         def get_sock_info():
-            if hasattr(self.conn, 'sock') and self.conn.sock is not None:
+            if hasattr(_conn, 'sock') and _conn.sock is not None:
                 try:
-                    fd = self.conn.sock.fileno()
-                    local_port = self.conn.sock.getsockname()[1]
-                    remote_addr = self.conn.sock.getpeername()
+                    fd = _conn.sock.fileno()
+                    local_port = _conn.sock.getsockname()[1]
+                    remote_addr = _conn.sock.getpeername()
                     return f"fd={fd} local_port={local_port} remote={remote_addr}"
                 except Exception as e:
                     # Socket is broken, use cached identity if available

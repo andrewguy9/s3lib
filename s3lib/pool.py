@@ -8,6 +8,7 @@ for efficient S3 operations.
 import threading
 import time
 from collections import deque
+from typing import Deque
 
 
 class ConnectionLease:
@@ -136,7 +137,7 @@ class ConnectionPool:
 
         # Thread-safe data structures
         # Use deque for O(1) append/pop (LIFO = MRU strategy)
-        self._available = deque()  # Available connections (MRU stack)
+        self._available: Deque = deque()  # Available connections (MRU stack)
         self._in_use = set()       # Connections currently leased
         self._all_connections = set()  # All connections ever created
 
