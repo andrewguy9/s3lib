@@ -529,6 +529,20 @@ def test_get_object_with_if_none_match():
         conn.delete_object(BUCKET, key)
 
 
+def test_put_object_bytesio():
+    """PUT with BytesIO works — BytesIO.fileno() raises but seek/tell gives length."""
+    import s3lib
+    import io
+    access_id, secret_key = _creds()
+    test_data = b"bytesio test data"
+    key = 'test_bytesio'
+    with s3lib.Connection(access_id, secret_key) as conn:
+        conn.put_object(BUCKET, key, io.BytesIO(test_data))
+        resp = conn.get_object(BUCKET, key)
+        assert resp.read() == test_data
+        conn.delete_object(BUCKET, key)
+
+
 def test_put_object_checksum_error_for_streaming():
     """Test put_object raises error for checksum calc on streaming data when explicitly requested."""
     import s3lib

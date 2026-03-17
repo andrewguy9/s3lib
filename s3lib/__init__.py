@@ -814,20 +814,28 @@ class Connection:
         # Determine content-length
         if isinstance(data, (str, bytes)):
             content_length = len(data)
+        elif hasattr(data, "seek") and hasattr(data, "tell"):
+            # Seekable stream (e.g. BytesIO, open file) — measure without reading
+            pos = data.tell()
+            data.seek(0, 2)  # seek to end
+            content_length = data.tell() - pos
+            data.seek(pos)   # seek back to original position
         elif hasattr(data, "fileno"):
-            fileno = data.fileno()
-            filestat = fstat(fileno)
-            if S_ISREG(filestat.st_mode):
-                content_length = filestat[ST_SIZE]
-            else:
-                # Special file, size won't be valid. Lets read the data to get value.
-                # We have to encode to utf-8 for later hashing.
-                # TODO This looks totally wrong. What about binary files?
-                #      I think data might be stdin which is why we are treating it like a string.
-                # TODO we are reading the ENTIRE STREAM we should not do that.
-                #      If we have to have a content length, we can stream into a
-                #      temp file and use that for buffering/checksumming.
-                data = data.read().encode("utf-8")
+            try:
+                fileno = data.fileno()
+                filestat = fstat(fileno)
+                if S_ISREG(filestat.st_mode):
+                    content_length = filestat[ST_SIZE]
+                else:
+                    # Special file (e.g. stdin/pipe) — read into buffer to get length.
+                    # TODO we are reading the ENTIRE STREAM we should not do that.
+                    #      If we have to have a content length, we can stream into a
+                    #      temp file and use that for buffering/checksumming.
+                    data = data.read()
+                    content_length = len(data)
+            except OSError:
+                # fileno() exists but raised (e.g. non-blocking pipe) — read into buffer
+                data = data.read()
                 content_length = len(data)
         else:
             raise TypeError(f"Cannot determine content-length of type {type(data)}")
