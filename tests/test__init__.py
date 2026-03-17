@@ -112,6 +112,46 @@ def test_connection_lifecycle_error():
         assert conn._outstanding_response is None  # Should be cleared
 
 
+def test_connection_exit_raises_on_unconsumed_response():
+    """Connection.__exit__ raises if an unconsumed response is outstanding."""
+    import unittest.mock as mock
+    from http.client import HTTPResponse
+
+    mock_resp = mock.Mock(spec=HTTPResponse)
+    mock_resp.isclosed.return_value = False
+
+    with pytest.raises(ConnectionLifecycleError, match="unconsumed response"):
+        with Connection("someaccess", b"somesecret") as conn:
+            conn._outstanding_response = mock_resp
+
+
+def test_connection_exit_clean_with_consumed_response():
+    """Connection.__exit__ does not raise if response was consumed."""
+    import unittest.mock as mock
+    from http.client import HTTPResponse
+
+    mock_resp = mock.Mock(spec=HTTPResponse)
+    mock_resp.isclosed.return_value = True
+
+    with Connection("someaccess", b"somesecret") as conn:
+        conn._outstanding_response = mock_resp
+    # no exception
+
+
+def test_connection_exit_suppresses_lifecycle_error_when_exception_in_flight():
+    """Connection.__exit__ does not raise lifecycle error if block already raised."""
+    import unittest.mock as mock
+    from http.client import HTTPResponse
+
+    mock_resp = mock.Mock(spec=HTTPResponse)
+    mock_resp.isclosed.return_value = False
+
+    with pytest.raises(RuntimeError, match="original"):
+        with Connection("someaccess", b"somesecret") as conn:
+            conn._outstanding_response = mock_resp
+            raise RuntimeError("original")
+
+
 def test_connection_initialized():
     """Test that connection attributes are properly initialized."""
     conn = Connection("someaccess", b"somesecret")

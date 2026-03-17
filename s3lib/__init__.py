@@ -173,8 +173,21 @@ class Connection:
         return self
 
     def __exit__(self, type, value, traceback):
-        """Close the connection and release all resources."""
+        """
+        Close the connection and release all resources.
+
+        Raises ConnectionLifecycleError if the connection exits with an
+        unconsumed response and no exception is already in flight. This catches
+        leaked handles — e.g. a get_object2 stream that was never closed.
+        """
         self._entered = False
+        if value is None and self._outstanding_response is not None:
+            if not self._is_response_consumed(self._outstanding_response):
+                self._disconnect()
+                raise ConnectionLifecycleError(
+                    "Connection exited with unconsumed response. "
+                    "Close the stream with 'with stream:' before exiting the connection."
+                )
         self._disconnect()
 
     def stats(self):
@@ -732,6 +745,8 @@ class Connection:
         resp = self._s3_request("PUT", dst_bucket, dst_key, {}, headers, "")
         if resp.status != OK:
             raise_http_resp_error(resp)
+        resp.read()  # NOTE: Should be zero size response. Required to reset the connection.
+        self._outstanding_response = None  # Response consumed
         return (resp.status, resp.getheaders())
 
     def _s3_put_request(
