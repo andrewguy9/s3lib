@@ -5,7 +5,6 @@ This test helps identify connection pool issues.
 
 import pytest
 import s3lib
-import io
 
 
 def test_multiple_gets_same_connection():
@@ -13,7 +12,7 @@ def test_multiple_gets_same_connection():
     try:
         from s3lib.ui import load_creds
         (access_id, secret_key) = load_creds(None)
-    except:
+    except Exception:
         pytest.skip("No AWS credentials available")
 
     bucket = 's3libtestbucket'
@@ -48,7 +47,7 @@ def test_multiple_puts_same_connection():
     try:
         from s3lib.ui import load_creds
         (access_id, secret_key) = load_creds(None)
-    except:
+    except Exception:
         pytest.skip("No AWS credentials available")
 
     bucket = 's3libtestbucket'
@@ -78,7 +77,7 @@ def test_interleaved_puts_and_gets():
     try:
         from s3lib.ui import load_creds
         (access_id, secret_key) = load_creds(None)
-    except:
+    except Exception:
         pytest.skip("No AWS credentials available")
 
     bucket = 's3libtestbucket'
@@ -112,7 +111,7 @@ def test_partial_read_detected_and_prevented():
     try:
         from s3lib.ui import load_creds
         (access_id, secret_key) = load_creds(None)
-    except:
+    except Exception:
         pytest.skip("No AWS credentials available")
 
     bucket = 's3libtestbucket'
@@ -150,7 +149,7 @@ def test_partial_read_multiple_recovery():
     try:
         from s3lib.ui import load_creds
         (access_id, secret_key) = load_creds(None)
-    except:
+    except Exception:
         pytest.skip("No AWS credentials available")
 
     bucket = 's3libtestbucket'
@@ -199,7 +198,7 @@ def test_no_read_detected():
     try:
         from s3lib.ui import load_creds
         (access_id, secret_key) = load_creds(None)
-    except:
+    except Exception:
         pytest.skip("No AWS credentials available")
 
     bucket = 's3libtestbucket'
@@ -234,7 +233,7 @@ def test_list_after_puts():
     try:
         from s3lib.ui import load_creds
         (access_id, secret_key) = load_creds(None)
-    except:
+    except Exception:
         pytest.skip("No AWS credentials available")
 
     bucket = 's3libtestbucket'

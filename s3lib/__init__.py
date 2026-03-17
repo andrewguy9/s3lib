@@ -5,16 +5,18 @@ from hmac import new as hmac_new
 from http.client import HTTPConnection, HTTPSConnection, HTTPException, HTTPResponse, NO_CONTENT, OK, RemoteDisconnected
 import ssl
 from logging import basicConfig as logging_basicConfig, DEBUG, getLogger
-from typing import Generator, Iterable, List, Tuple
-from .utils import batchify, raise_http_resp_error, get_string_to_sign
+from typing import Generator, Iterable, Optional, Tuple, TypedDict, Union
+from .utils import batchify, raise_http_resp_error
 from .sigv4 import sign_request_v4, hash_payload, get_timestamp
 from os import environ, fstat
 from urllib.parse import quote
 from stat import S_ISREG, ST_SIZE
 from sys import stderr
-from time import gmtime, strftime, time
+from time import time
 from xml.etree.ElementTree import fromstring as parse
 from xml.etree.ElementTree import Element, SubElement, tostring
+
+from .pool import ConnectionPool, ConnectionLease  # noqa: F401
 
 # Configure module-level logger
 logger = getLogger(__name__)
@@ -30,17 +32,102 @@ if environ.get('S3LIB_DEBUG'):
     logger.setLevel(DEBUG)
 
 
+class PutResult(TypedDict):
+    """
+    Result of a successful put_object2() call.
+
+    etag:       ETag of the stored object (use with if_match for consistency checks)
+    version_id: Version ID if bucket versioning is enabled, otherwise None
+    checksum:   Server-confirmed checksum value if one was sent, otherwise None
+    """
+    etag: str
+    version_id: str | None
+    checksum: str | None
+
+
 class ConnectionLifecycleError(Exception):
     """Raised when attempting to reuse a connection with an unconsumed response."""
     pass
 
 
+class S3ByteStream:
+    """
+    A streaming byte source wrapping an S3 HTTP response.
+
+    Returned by get_object2() when data is available. Supports incremental
+    reading via read() and MUST be used as a context manager to ensure the
+    underlying connection is cleaned up correctly.
+
+    Connection hygiene on __exit__:
+      - If the stream was fully exhausted by read(), the HTTP connection is
+        already clean and remains open for reuse (keep-alive).
+      - If the stream was not fully consumed (early exit), the underlying
+        response is closed, triggering a reconnect on the next request.
+        This avoids draining potentially large amounts of unwanted data.
+
+    An optional on_close callback fires in __exit__ after cleanup, allowing
+    callers to track stream lifetime and enforce handle discipline.
+
+    Usage:
+        stream, headers = conn.get_object2(bucket, key)
+        if stream is not None:
+            with stream:
+                while chunk := stream.read(65536):
+                    process(chunk)
+    """
+
+    def __init__(self, response: HTTPResponse, on_close=None):
+        self._response = response
+        self._exhausted = False
+        self._on_close = on_close
+
+    def read(self, size: int = -1) -> bytes:
+        buf = self._response.read(size)
+        if not buf:
+            self._exhausted = True
+        return buf
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if not self._exhausted:
+            # Not fully consumed — close to avoid draining a potentially large body.
+            # The connection will reconnect on the next request.
+            self._response.close()
+        if self._on_close:
+            self._on_close()
+        return False
+
+
 class Connection:
+    """
+    An S3 connection for making requests against a single endpoint.
+
+    Accepts connection configuration and exposes high-level Pythonic methods
+    for S3 operations — no HTTP knowledge required.
+
+    Connection is a context manager. On entry, the connection is prepared for
+    use. On exit, the underlying socket is closed and all resources are
+    released. Always use Connection as a context manager to ensure clean
+    resource cleanup:
+
+        with Connection(access_id, secret) as conn:
+            result = conn.put_object2(bucket, key, data)
+            stream, headers = conn.get_object2(bucket, key)
+            with stream:
+                data = stream.read()
+
+    Connections can be reused across multiple requests. Once a request's
+    response payload has been fully consumed, the connection is ready for
+    the next request. Use is_ready() to check before reusing.
+    """
+
     def __init__(
         self,
         access_id: str,
         secret: bytes,
-        host: str | None =None,
+        host: str | None = None,
         port: int | None = None,
         conn_timeout: float | None = None,
         region: str | None = None,
@@ -65,23 +152,42 @@ class Connection:
         self.port = port or (443 if use_ssl else 80)
         self.host = host or "s3.amazonaws.com"
         self.conn_timeout = conn_timeout if conn_timeout is not None else 4
-        self.conn = None
-        self._outstanding_response = None
+        self.conn: Optional[Union[HTTPConnection, HTTPSConnection]] = None
+        self._entered = False
+        self._outstanding_response: Optional[HTTPResponse] = None
         self._server_requested_close = False
         # Default region: env var > us-east-1 (matches boto3 behavior)
         self.region = region or environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+        self._current_endpoint: Optional[str] = None
+        self._bucket_regions: dict[str, str] = {}
         # Track socket identity even after socket closes
-        self._socket_identity = None  # Will be set to "fd=X local_port=Y" when connected
+        self._socket_identity: Optional[str] = None  # Will be set to "fd=X local_port=Y" when connected
         # Statistics counters for monitoring performance
         self._connects = 0    # Number of TCP connections established
         self._requests = 0    # Number of HTTP requests made
         self._redirects = 0   # Number of S3 redirects (301/307) encountered
 
     def __enter__(self):
-        self._connect()
+        """Activate the connection for use. Must be called before making requests."""
+        self._entered = True
         return self
 
     def __exit__(self, type, value, traceback):
+        """
+        Close the connection and release all resources.
+
+        Raises ConnectionLifecycleError if the connection exits with an
+        unconsumed response and no exception is already in flight. This catches
+        leaked handles — e.g. a get_object2 stream that was never closed.
+        """
+        self._entered = False
+        if value is None and self._outstanding_response is not None:
+            if not self._is_response_consumed(self._outstanding_response):
+                self._disconnect()
+                raise ConnectionLifecycleError(
+                    "Connection exited with unconsumed response. "
+                    "Close the stream with 'with stream:' before exiting the connection."
+                )
         self._disconnect()
 
     def stats(self):
@@ -103,6 +209,23 @@ class Connection:
             'requests': self._requests,
             'redirects': self._redirects,
         }
+
+    def is_ready(self) -> bool:
+        """
+        Returns True if this connection is ready to accept a new request.
+
+        A connection is ready when it has no outstanding response payload
+        waiting to be consumed. It does not need an open socket — the
+        connection will be established automatically on the next request.
+
+        Use this to check whether a connection can be reused:
+
+            if conn.is_ready():
+                stream, headers = conn.get_object2(bucket, key)
+        """
+        if self._outstanding_response is None:
+            return True
+        return self._is_response_consumed(self._outstanding_response)
 
     #######################
     # Interface Functions #
@@ -139,7 +262,7 @@ class Connection:
             bucket: str,
             start: str | None = None,
             prefix: str | None = None,
-            batch_size: int | None =    None):
+            batch_size: int | None = None):
         """List contents of individual bucket."""
         for obj in self.list_bucket2(bucket, start, prefix, batch_size):
             yield obj[LIST_BUCKET_KEY]
@@ -150,7 +273,8 @@ class Connection:
             key: str,
             headers: dict[str, str] | None = None,
             if_match: str | None = None,
-            if_none_match: str | None = None):
+            if_none_match: str | None = None,
+            byte_range: Tuple[int | None, int | None] | None = None):
         """
         Pull down bucket object by key with optional conditional checks.
 
@@ -162,16 +286,32 @@ class Connection:
                       Example: 'abc123def456'
             if_none_match: ETag string (without quotes) - skip download if current ETag matches
                            Example: 'abc123def456'
+            byte_range: Tuple of (start, end) byte positions (inclusive, 0-based).
+                        Use None to mean "from beginning" or "to end".
+                        Examples:
+                          (0, None)    - entire object (same as no range)
+                          (0, 499)     - first 500 bytes
+                          (500, 999)   - bytes 500-999
+                          (500, None)  - from byte 500 to end of object
 
         Returns:
             HTTPResponse object with status:
-            - 200: Success, object downloaded
+            - 200: Success, full object downloaded
+            - 206: Partial Content, byte range returned
             - 304: Not Modified (if_none_match matched, object unchanged)
             - 412: Precondition Failed (if_match didn't match, object changed)
 
         Examples:
             # Basic download
             response = conn.get_object(bucket, key)
+            data = response.read()
+
+            # First 1024 bytes
+            response = conn.get_object(bucket, key, byte_range=(0, 1023))
+            data = response.read()
+
+            # From byte 4096 to end
+            response = conn.get_object(bucket, key, byte_range=(4096, None))
             data = response.read()
 
             # Only download if changed (caching)
@@ -191,19 +331,94 @@ class Connection:
             else:
                 data = response.read()
         """
-        if headers is None:
-            headers = dict()
-        else:
-            headers = dict(headers)
-
-        # Add conditional headers - quotes required by HTTP protocol
-        if if_match:
-            headers["If-Match"] = f'"{if_match}"'
-        if if_none_match:
-            headers["If-None-Match"] = f'"{if_none_match}"'
-
         # TODO Want to replace with some enter, exit struct.
-        return self._s3_get_request(bucket, key, headers)
+        response, _ = self._s3_get_request(
+            bucket, key,
+            if_match=if_match,
+            if_none_match=if_none_match,
+            byte_range=byte_range,
+            extra_headers=headers,
+        )
+        return response
+
+    def get_object2(
+            self,
+            bucket: str,
+            key: str,
+            if_match: str | None = None,
+            if_none_match: str | None = None,
+            byte_range: Tuple[int | None, int | None] | None = None,
+    ) -> Tuple['S3ByteStream', dict[str, str]] | Tuple[None, dict[str, str]]:
+        """
+        Fetch an S3 object, returning a stream and headers.
+
+        Unlike get_object(), this method hides all HTTP complexity. The caller
+        receives either a stream to read from, or None if the server returned
+        no body.
+
+        Args:
+            bucket: S3 bucket name
+            key: Object key
+            if_match: ETag (without quotes) — if the object's ETag no longer
+                      matches, returns (None, headers) with the server's 412 response
+            if_none_match: ETag (without quotes) — if the object is unchanged,
+                           returns (None, headers) with the server's 304 response
+            byte_range: (start, end) byte positions, inclusive, 0-based. Either
+                        can be None for "from start" or "to end".
+
+        Returns:
+            (S3ByteStream, headers) — data is available. Caller MUST always use
+                the stream as a context manager. If the stream is fully consumed,
+                the underlying connection may be reused. If the stream is not fully
+                consumed, the connection will be force-closed on exit, preventing reuse.
+            (None, headers) — no body. Either:
+                - 304: if_none_match matched, object unchanged
+                - 412: if_match failed, object has changed
+
+        Raises:
+            ValueError: On any unexpected HTTP response status
+
+        Examples:
+            # Basic streaming download — always use as context manager
+            stream, headers = conn.get_object2(bucket, key)
+            with stream:
+                while chunk := stream.read(65536):
+                    process(chunk)
+
+            # Caching — skip download if unchanged
+            stream, headers = conn.get_object2(bucket, key, if_none_match=cached_etag)
+            if stream is None:
+                use_cache()  # 304 — object unchanged
+            else:
+                with stream:
+                    data = stream.read()
+
+            # Optimistic read — caller decides if 412 is an error
+            stream, headers = conn.get_object2(bucket, key, if_match=expected_etag)
+            if stream is None:
+                handle_changed()  # 412 — object has changed, no data returned
+            else:
+                with stream:
+                    data = stream.read()
+
+            # Byte range fetch
+            stream, headers = conn.get_object2(bucket, key, byte_range=(0, 1023))
+            with stream:
+                header_bytes = stream.read()
+        """
+        response, resp_headers = self._s3_get_request(
+            bucket, key,
+            if_match=if_match,
+            if_none_match=if_none_match,
+            byte_range=byte_range,
+        )
+        if response is None:
+            return (None, resp_headers)
+
+        def _on_close():
+            self._outstanding_response = None
+
+        return (S3ByteStream(response, on_close=_on_close), resp_headers)
 
     def get_object_url(self, bucket: str, key: str, proto="https") -> str:
         """get a public url for the object in the bucket."""
@@ -228,7 +443,13 @@ class Connection:
             for key, result in results:
                 yield key, result
 
-    def copy_object(self, src_bucket: str, src_key: str, dst_bucket: str, dst_key: str, headers: dict[str, str] | None = None) -> Tuple[int, dict[str, str]]:
+    def copy_object(self,
+                    src_bucket: str,
+                    src_key: str,
+                    dst_bucket: str,
+                    dst_key: str,
+                    headers: dict[str, str] | None = None
+                    ) -> Tuple[int, dict[str, str]]:
         """copy key from one bucket to another"""
         if headers is None:
             headers = dict()
@@ -248,8 +469,8 @@ class Connection:
         headers: dict[str, str] | None = None,
         sha256_hint: bytes | None = None,
         checksum_algorithm: str | None = None,
-        if_none_match = False,
-        if_match = None,
+        if_none_match: bool = False,
+        if_match: str | None = None,
     ):
         """
         Push object from local to bucket with optional integrity and conditional checks.
@@ -297,78 +518,93 @@ class Connection:
             etag = dict(headers_resp)['etag'].strip('"')  # Remove quotes
             conn.put_object(bucket, key, new_data, if_match=etag)
         """
-        if headers is None:
-            headers = dict()
-        else:
-            headers = dict(headers)
-
-        # Determine which algorithm to use
-        # Default to SHA256 for str/bytes if no algorithm specified (best effort, no error)
-        user_requested_algo = checksum_algorithm is not None
-        if checksum_algorithm is None and isinstance(data, (str, bytes)):
-            checksum_algorithm = "SHA256"
-
-        # Handle modern checksum headers
-        if checksum_algorithm:
-            # If SHA256 and we already have the hint, reuse it
-            if checksum_algorithm == "SHA256" and sha256_hint is not None:
-                # We have the digest as bytes, convert to base64 for checksum header
-                checksum_value = (
-                    b2a_base64(sha256_hint).strip().decode("ascii")
-                )
-            else:
-                # Need to calculate checksum
-                checksum_value = calculate_checksum_if_possible(
-                    data, checksum_algorithm
-                )
-
-                if not checksum_value:
-                    # If user explicitly requested algorithm, must succeed or error
-                    if user_requested_algo:
-                        raise ValueError(
-                            f"Cannot calculate {checksum_algorithm} checksum for streaming data. "
-                            "Provide sha256_hint or use str/bytes data."
-                        )
-                    # Otherwise (default algorithm), silently skip checksumming
-                    else:
-                        checksum_algorithm = None
-
-                # Special case: if calculating SHA256 and we don't have the hint yet,
-                # calculate it once and reuse for signature
-                if (
-                    checksum_value
-                    and checksum_algorithm == "SHA256"
-                    and sha256_hint is None
-                ):
-                    if isinstance(data, str):
-                        data_bytes = data.encode("utf-8")
-                    elif isinstance(data, bytes):
-                        data_bytes = data
-                    else:
-                        data_bytes = None
-
-                    if data_bytes is not None:
-                        from hashlib import sha256
-
-                        sha256_hint = sha256(data_bytes).digest()
-
-            # Add modern checksum headers only if we successfully calculated
-            if checksum_algorithm and checksum_value:
-                headers["x-amz-checksum-algorithm"] = checksum_algorithm
-                headers[f"x-amz-checksum-{checksum_algorithm.lower()}"] = checksum_value
-
-        # Handle conditional headers
-        if if_none_match:
-            headers["If-None-Match"] = "*"
-        if if_match:
-            headers["If-Match"] = f'"{if_match}"'
-
-        # Call existing implementation (which calls _s3_put_request)
-        # Pass sha256_hint for signature optimization
-        (status, resp_headers) = self._s3_put_request(
-            bucket, key, data, headers, sha256_hint=sha256_hint
+        return self._s3_put_request(
+            bucket, key, data,
+            sha256_hint=sha256_hint,
+            checksum_algorithm=checksum_algorithm,
+            if_none_match=if_none_match,
+            if_match=if_match,
+            extra_headers=headers,
         )
-        return (status, resp_headers)
+
+    def put_object2(
+        self,
+        bucket: str,
+        key: str,
+        data,
+        sha256_hint: bytes | None = None,
+        checksum_algorithm: str | None = None,
+        if_none_match: bool = False,
+        if_match: str | None = None,
+    ) -> PutResult:
+        """
+        Upload an object, returning a PutResult with fields useful for consistency checks.
+
+        Unlike put_object(), this method extracts the meaningful fields from the
+        HTTP response so the caller never has to parse headers.
+
+        Args:
+            bucket: S3 bucket name
+            key: Object key
+            data: Data to upload (str, bytes, or file object)
+            sha256_hint: Pre-calculated SHA256 digest as bytes to skip recalculation
+            checksum_algorithm: 'SHA256', 'SHA1', 'MD5', or None. Defaults to 'SHA256'
+                                for str/bytes data.
+            if_none_match: If True, only upload if object does not already exist
+            if_match: ETag (without quotes) — only upload if current ETag matches
+
+        Returns:
+            PutResult with:
+                etag:       ETag of the stored object — use with if_match on future
+                            get_object2/put_object2 calls for consistency checks
+                version_id: Version ID if bucket versioning is enabled, otherwise None
+                checksum:   Server-confirmed checksum if one was sent, otherwise None
+
+        Raises:
+            ValueError: If checksum calculation was requested but not possible
+            ValueError: On any unexpected HTTP response status
+
+        Examples:
+            # Basic upload
+            result = conn.put_object2(bucket, key, b"data")
+            print(result['etag'])
+
+            # Write then read with consistency check
+            result = conn.put_object2(bucket, key, b"data")
+            stream, headers = conn.get_object2(bucket, key, if_match=result['etag'])
+            if stream is None:
+                raise RuntimeError("object was modified between write and read")
+
+            # Create-only (prevent overwrites)
+            result = conn.put_object2(bucket, key, data, if_none_match=True)
+
+            # Optimistic locking
+            result = conn.put_object2(bucket, key, new_data, if_match=old_etag)
+        """
+        _, resp_headers = self._s3_put_request(
+            bucket, key, data,
+            sha256_hint=sha256_hint,
+            checksum_algorithm=checksum_algorithm,
+            if_none_match=if_none_match,
+            if_match=if_match,
+        )
+        h = dict(resp_headers)
+
+        # Strip surrounding quotes S3 wraps ETags in
+        etag = h.get('etag', '').strip('"')
+
+        # checksum confirmation — S3 echoes back whichever algorithm was used
+        checksum = (
+            h.get('x-amz-checksum-sha256') or
+            h.get('x-amz-checksum-sha1') or
+            h.get('x-amz-checksum-md5')
+        )
+
+        return PutResult(
+            etag=etag,
+            version_id=h.get('x-amz-version-id'),
+            checksum=checksum,
+        )
 
     ##########################
     # Http request Functions #
@@ -420,16 +656,61 @@ class Connection:
             return data
         raise ConnectionError("Failed to read list response after retries")
 
-    def _s3_get_request(self, bucket: str, key: str, headers: dict[str, str] | None = None) -> HTTPResponse:
-        if headers is None:
-            headers = {}
+    def _s3_get_request(
+            self,
+            bucket: str,
+            key: str,
+            if_match: str | None = None,
+            if_none_match: str | None = None,
+            byte_range: Tuple[int | None, int | None] | None = None,
+            extra_headers: dict[str, str] | None = None,
+    ) -> Tuple[HTTPResponse | None, dict[str, str]]:
+        """
+        Execute a GET request against S3, handling all header construction and
+        status validation.
+
+        Returns:
+            (HTTPResponse, headers) on success (200 or 206)
+            (None, headers) for conditional responses (304 or 412) — body consumed internally
+
+        Raises:
+            ValueError: On unexpected HTTP status
+        """
+        headers: dict[str, str] = dict(extra_headers) if extra_headers else {}
+
         # Request checksums in response headers
         headers['x-amz-checksum-mode'] = 'ENABLED'
+
+        # Conditional request headers — quotes required by HTTP protocol
+        if if_match:
+            headers['If-Match'] = f'"{if_match}"'
+        if if_none_match:
+            headers['If-None-Match'] = f'"{if_none_match}"'
+
+        # Byte range header
+        if byte_range is not None:
+            start, end = byte_range
+            start_str = "" if start is None else str(start)
+            end_str = "" if end is None else str(end)
+            headers['Range'] = f"bytes={start_str}-{end_str}"
+
+        # 206 when a range was requested, 200 for a full object fetch.
+        expected_success = 206 if byte_range is not None else 200
+
         resp = self._s3_request("GET", bucket, key, {}, headers, "")
-        # Don't raise for conditional response codes (304, 412) - caller handles them
-        if resp.status not in (OK, 304, 412):
+        resp_headers = dict(resp.getheaders())
+
+        if resp.status in (304, 412):
+            # 304 Not Modified: if_none_match matched, object unchanged.
+            # 412 Precondition Failed: if_match failed, object has changed.
+            # Both have no body — consume to keep the connection clean.
+            resp.read()
+            return (None, resp_headers)
+
+        if resp.status != expected_success:
             raise_http_resp_error(resp)
-        return resp
+
+        return (resp, resp_headers)
 
     def _s3_head_request(self, bucket: str, key: str) -> Tuple[int, dict[str, str]]:
         # Request checksums in response headers
@@ -464,53 +745,104 @@ class Connection:
         resp = self._s3_request("PUT", dst_bucket, dst_key, {}, headers, "")
         if resp.status != OK:
             raise_http_resp_error(resp)
+        resp.read()  # NOTE: Should be zero size response. Required to reset the connection.
+        self._outstanding_response = None  # Response consumed
         return (resp.status, resp.getheaders())
 
     def _s3_put_request(
-        self, bucket, key, data, headers, sha256_hint=None, md5_hint=None
-    ):
+        self,
+        bucket: str,
+        key: str,
+        data,
+        sha256_hint: bytes | None = None,
+        checksum_algorithm: str | None = None,
+        if_none_match: bool = False,
+        if_match: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        md5_hint=None,
+    ) -> Tuple[int, list]:
         """
-        Mid-level PUT request handler.
+        Execute a PUT request against S3, handling all header construction and
+        checksum logic.
 
-        Args:
-            bucket: S3 bucket name
-            key: Object key
-            data: Data to upload (str, bytes, or file-like object)
-            headers: Request headers dict
-            sha256_hint: Optional pre-calculated SHA256 digest as bytes.
-                         Passed through to _s3_request.
-            md5_hint: Optional pre-calculated MD5 digest as bytes.
-                      Passed through to _s3_request.
+        Returns:
+            (status, resp_headers)
+
+        Raises:
+            ValueError: If checksum calculation requested but not possible for streaming data
         """
-        args = {}
+        headers: dict[str, str] = dict(extra_headers) if extra_headers else {}
+
+        # Determine which checksum algorithm to use.
+        # Default to SHA256 for str/bytes — best effort, no error if not possible.
+        user_requested_algo = checksum_algorithm is not None
+        if checksum_algorithm is None and isinstance(data, (str, bytes)):
+            checksum_algorithm = "SHA256"
+
+        if checksum_algorithm:
+            if checksum_algorithm == "SHA256" and sha256_hint is not None:
+                # Reuse pre-computed digest — convert bytes to base64
+                checksum_value = b2a_base64(sha256_hint).strip().decode("ascii")
+            else:
+                checksum_value = calculate_checksum_if_possible(data, checksum_algorithm)
+                if not checksum_value:
+                    if user_requested_algo:
+                        raise ValueError(
+                            f"Cannot calculate {checksum_algorithm} checksum for streaming data. "
+                            "Provide sha256_hint or use str/bytes data."
+                        )
+                    else:
+                        checksum_algorithm = None
+
+                # Derive sha256_hint from data so _s3_request can reuse it for signing
+                if checksum_value and checksum_algorithm == "SHA256" and sha256_hint is None:
+                    if isinstance(data, (str, bytes)):
+                        from hashlib import sha256 as _sha256
+                        data_bytes = data.encode("utf-8") if isinstance(data, str) else data
+                        sha256_hint = _sha256(data_bytes).digest()
+
+            if checksum_algorithm and checksum_value:
+                headers["x-amz-checksum-algorithm"] = checksum_algorithm
+                headers[f"x-amz-checksum-{checksum_algorithm.lower()}"] = checksum_value
+
+        # Conditional request headers
+        if if_none_match:
+            headers["If-None-Match"] = "*"
+        if if_match:
+            headers["If-Match"] = f'"{if_match}"'
+
+        # Determine content-length
         if isinstance(data, (str, bytes)):
             content_length = len(data)
+        elif hasattr(data, "seek") and hasattr(data, "tell"):
+            # Seekable stream (e.g. BytesIO, open file) — measure without reading
+            pos = data.tell()
+            data.seek(0, 2)  # seek to end
+            content_length = data.tell() - pos
+            data.seek(pos)   # seek back to original position
         elif hasattr(data, "fileno"):
-            fileno = data.fileno()
-            filestat = fstat(fileno)
-            if S_ISREG(filestat.st_mode):
-                # Regular file
-                content_length = filestat[ST_SIZE]
-            else:
-                # Special file, size won't be valid. Lets read the data to get value.
-                # We have to encode to utf-8 for later hashing.
-                # TODO This looks totally wrong. What about binary files?
-                #      I think data might be stdin which is why we are treating it like a string.
-                # TODO we are reading the ENTIRE STREAM we should not do that.
-                #      If we have to have a content length, we can stream into a
-                #      temp file and use that for buffering/checksumming.
-                data = data.read().encode("utf-8")
+            try:
+                fileno = data.fileno()
+                filestat = fstat(fileno)
+                if S_ISREG(filestat.st_mode):
+                    content_length = filestat[ST_SIZE]
+                else:
+                    # Special file (e.g. stdin/pipe) — read into buffer to get length.
+                    # TODO we are reading the ENTIRE STREAM we should not do that.
+                    #      If we have to have a content length, we can stream into a
+                    #      temp file and use that for buffering/checksumming.
+                    data = data.read()
+                    content_length = len(data)
+            except OSError:
+                # fileno() exists but raised (e.g. non-blocking pipe) — read into buffer
+                data = data.read()
                 content_length = len(data)
         else:
             raise TypeError(f"Cannot determine content-length of type {type(data)}")
-        headers["content-length"] = content_length
+        headers["content-length"] = str(content_length)
+
         resp = self._s3_request(
-            "PUT",
-            bucket,
-            key,
-            args,
-            headers,
-            data,
+            "PUT", bucket, key, {}, headers, data,
             sha256_hint=sha256_hint,
             md5_hint=md5_hint,
         )
@@ -549,11 +881,6 @@ class Connection:
 
         # Validate that previous response was consumed before making a new request
         self._validate_connection_ready()
-
-        http_now = strftime("%a, %d %b %Y %H:%M:%S +0000", gmtime())
-        # Initialize bucket region cache if not present
-        if not hasattr(self, "_bucket_regions"):
-            self._bucket_regions = {}
 
         # Use cached region for this bucket if available
         if bucket and bucket in self._bucket_regions:
@@ -658,12 +985,8 @@ class Connection:
                 # This format works for all regions and avoids 301 redirects
                 host = f"{bucket}.s3-{self.region}.amazonaws.com"
                 # Only reconnect if we're not already connected to this endpoint
-                if (
-                    not hasattr(self, "_current_endpoint")
-                    or self._current_endpoint != host
-                ):
-                    if hasattr(self, "conn"):
-                        self._disconnect()
+                if self._current_endpoint != host:
+                    self._disconnect()
                     cls = HTTPSConnection if self.use_ssl else HTTPConnection
                     self.conn = cls(
                         host, self.port, timeout=self.conn_timeout
@@ -752,12 +1075,14 @@ class Connection:
         request_start = time()
 
         # Helper to get socket info
+        _conn = self.conn
+
         def get_sock_info():
-            if hasattr(self.conn, 'sock') and self.conn.sock is not None:
+            if hasattr(_conn, 'sock') and _conn.sock is not None:
                 try:
-                    fd = self.conn.sock.fileno()
-                    local_port = self.conn.sock.getsockname()[1]
-                    remote_addr = self.conn.sock.getpeername()
+                    fd = _conn.sock.fileno()
+                    local_port = _conn.sock.getsockname()[1]
+                    remote_addr = _conn.sock.getpeername()
                     return f"fd={fd} local_port={local_port} remote={remote_addr}"
                 except Exception as e:
                     # Socket is broken, use cached identity if available
@@ -790,7 +1115,9 @@ class Connection:
                 elif isinstance(content, str):
                     content_info = f"string ({len(content)} chars)"
 
-            logger.debug("Starting %s request to %s, content: %s, socket: %s", method, resource, content_info, sock_info)
+            logger.debug(
+                "Starting %s request to %s, content: %s, socket: %s",
+                method, resource, content_info, sock_info)
             logger.debug("Request headers: %s", dict(headers))
 
             # Log file position before request if it's a file
@@ -826,7 +1153,10 @@ class Connection:
             if logger.isEnabledFor(DEBUG) and file_pos_before is not None and hasattr(content, 'tell'):
                 try:
                     file_pos_after = content.tell()
-                    logger.debug("File position after request: %s (read %s bytes)", file_pos_after, file_pos_after - file_pos_before)
+                    logger.debug(
+                        "File position after request: %s (read %s bytes)",
+                        file_pos_after, file_pos_after - file_pos_before
+                    )
                 except Exception:
                     pass
 
@@ -845,8 +1175,10 @@ class Connection:
             if logger.isEnabledFor(DEBUG):
                 total_duration = time() - request_start
                 sock_info_after = get_sock_info()
-                logger.debug("Request completed in %.2fs (request: %.2fs, getresponse: %.2fs), status: %s, socket: %s",
-                            total_duration, request_call_duration, getresponse_duration, resp.status, sock_info_after)
+                logger.debug(
+                    "Request completed in %.2fs (request: %.2fs, getresponse: %.2fs), status: %s, socket: %s",
+                    total_duration, request_call_duration, getresponse_duration, resp.status, sock_info_after
+                )
         except (
             ConnectionResetError,
             BrokenPipeError,
@@ -893,8 +1225,14 @@ class Connection:
     def _validate_connection_ready(self):
         """
         Ensure connection is in a valid state for a new request.
-        Raises ConnectionLifecycleError if a previous response hasn't been consumed.
+        Raises ConnectionLifecycleError if used outside a context manager or
+        if a previous response hasn't been consumed.
         """
+        if not self._entered:
+            raise ConnectionLifecycleError(
+                "Connection must be used as a context manager. "
+                "Use 'with Connection(...) as conn:' before making requests."
+            )
         if self._outstanding_response is not None:
             if not self._is_response_consumed(self._outstanding_response):
                 raise ConnectionLifecycleError(
@@ -1132,15 +1470,18 @@ def _parse_list_response(xml: str) -> Tuple[list[dict[str, str | None]], str | N
     return (items, next_token)
 
 
+API_VERSION = "http://s3.amazonaws.com/doc/2006-03-01/"
+
+
 def _parse_get_service_response(xml: str) -> list[str]:
-    bucket_path = "{http://s3.amazonaws.com/doc/2006-03-01/}Buckets/{http://s3.amazonaws.com/doc/2006-03-01/}Bucket/{http://s3.amazonaws.com/doc/2006-03-01/}Name"
+    bucket_path = f"{{{API_VERSION}}}Buckets/{{{API_VERSION}}}Bucket/{{{API_VERSION}}}Name"
     tree = parse(xml)
     buckets = tree.findall(bucket_path)
     names = [str(b.text) for b in buckets]
     return names
 
 
-KEY_PATH = "{http://s3.amazonaws.com/doc/2006-03-01/}Key"
+KEY_PATH = f"{{{API_VERSION}}}Key"
 
 
 def _tag_normalize(name: str) -> str:
@@ -1183,7 +1524,3 @@ def _calculate_query_arg_str(args: dict[str, str | None]) -> str:
     if args_str:
         args_str = "?" + args_str
     return args_str
-
-
-# Import connection pooling classes
-from .pool import ConnectionPool, ConnectionLease

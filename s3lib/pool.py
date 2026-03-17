@@ -8,6 +8,7 @@ for efficient S3 operations.
 import threading
 import time
 from collections import deque
+from typing import Deque
 
 
 class ConnectionLease:
@@ -37,17 +38,21 @@ class ConnectionLease:
 
     def __enter__(self):
         """
-        Enter context: return the wrapped connection.
+        Enter context: activate and return the wrapped connection.
 
         Returns:
             Connection: The leased connection for use
         """
         self._entered = True
+        self._connection.__enter__()
         return self._connection
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """
-        Exit context: return connection to pool.
+        Exit context: deactivate and return connection to pool.
+
+        Clears the connection's entered state without closing the socket —
+        the pool manages the socket lifecycle, not the connection itself.
 
         Always returns connection, even on exception.
         Does not suppress exceptions.
@@ -56,6 +61,9 @@ class ConnectionLease:
             False: Don't suppress exceptions
         """
         if self._entered:
+            # Mark the connection as no longer active without closing the socket.
+            # Connection.__exit__ would close the socket, which we don't want here.
+            self._connection._entered = False
             # Return connection to pool (thread-safe)
             self._pool._return_connection(self._connection)
 
@@ -64,30 +72,29 @@ class ConnectionLease:
 
 class ConnectionPool:
     """
-    Thread-safe connection pool for S3 operations.
+    Thread-safe pool of S3 Connection objects.
 
-    Manages a pool of reusable Connection objects with:
-    - MRU (Most Recently Used) allocation strategy
-    - Thread-safe concurrent access
-    - Automatic connection validation
-    - Resource lifecycle management
-    - Configurable pool size and timeouts
+    Manages a set of reusable Connection objects, handing them out to callers
+    via leases and returning them to the pool when the lease exits. Callers
+    never interact with the pool directly beyond acquiring and releasing leases.
+
+    The pool uses Connection.is_ready() to decide whether a returned connection
+    can be recycled. If a caller returns a lease while an S3ByteStream is still
+    open and unexhausted, the connection is not ready and is discarded rather
+    than recycled. A fresh connection will be created on the next lease.
+
+    Connections are allocated using an MRU (Most Recently Used) strategy —
+    the most recently returned connection is leased first, keeping hot
+    connections warm and minimising reconnects.
 
     Usage:
-        # Create pool
-        pool = ConnectionPool(access_id, secret, max_connections=10)
-
-        # Use pool (thread-safe)
-        with pool.lease() as conn:
-            conn.put_object(bucket, key, data)
-
-        # Clean up
-        pool.close()
-
-        # Or use as context manager
-        with ConnectionPool(access_id, secret) as pool:
+        with ConnectionPool(access_id, secret, max_connections=10) as pool:
             with pool.lease() as conn:
-                conn.put_object(bucket, key, data)
+                result = conn.put_object2(bucket, key, data)
+            with pool.lease() as conn:
+                stream, headers = conn.get_object2(bucket, key)
+                with stream:
+                    data = stream.read()
     """
 
     def __init__(self, access_id, secret, host=None, port=None,
@@ -130,7 +137,7 @@ class ConnectionPool:
 
         # Thread-safe data structures
         # Use deque for O(1) append/pop (LIFO = MRU strategy)
-        self._available = deque()  # Available connections (MRU stack)
+        self._available: Deque = deque()  # Available connections (MRU stack)
         self._in_use = set()       # Connections currently leased
         self._all_connections = set()  # All connections ever created
 
@@ -232,21 +239,23 @@ class ConnectionPool:
 
     def _create_new_connection(self):
         """
-        Create a new connection.
+        Create a new Connection and add it to the pool as in-use.
 
         Must be called with lock held.
-        Creates Connection, connects it, and tracks it.
+
+        Connection objects connect lazily — no socket is opened here.
+        The socket will be established on the first request made against
+        the connection.
 
         Returns:
-            Connection: Newly created and connected connection
+            Connection: Newly created connection, ready for use
 
         Raises:
-            Any exception from Connection creation or connection
+            Any exception from Connection construction
         """
         # Import here to avoid circular dependency
         from . import Connection
 
-        # Create connection with pool's configuration
         conn = Connection(
             self.access_id,
             self.secret,
@@ -256,10 +265,6 @@ class ConnectionPool:
             use_ssl=self.use_ssl
         )
 
-        # Connect it
-        conn._connect()
-
-        # Track it
         self._all_connections.add(conn)
         self._in_use.add(conn)
 
@@ -267,21 +272,19 @@ class ConnectionPool:
 
     def _is_connection_valid(self, conn):
         """
-        Check if connection is still valid.
+        Check if connection is ready to be recycled back into the pool.
 
-        A connection is valid if it has an open socket.
+        Delegates to conn.is_ready() — the pool does not inspect Connection
+        internals directly. Connection owns the definition of readiness.
 
         Args:
             conn: Connection to check
 
         Returns:
-            bool: True if connection is valid and usable
+            bool: True if connection is ready for a new request
         """
         try:
-            # Check if connection has valid HTTPConnection with open socket
-            return (conn.conn is not None and
-                    hasattr(conn.conn, 'sock') and
-                    conn.conn.sock is not None)
+            return conn.is_ready()
         except Exception:
             return False
 

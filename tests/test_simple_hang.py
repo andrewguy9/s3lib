@@ -11,7 +11,7 @@ def test_simple_put_get_delete():
     try:
         from s3lib.ui import load_creds
         (access_id, secret_key) = load_creds(None)
-    except:
+    except Exception:
         pytest.skip("No AWS credentials available")
 
     bucket = 's3libtestbucket'
@@ -36,7 +36,7 @@ def test_two_puts_then_deletes():
     try:
         from s3lib.ui import load_creds
         (access_id, secret_key) = load_creds(None)
-    except:
+    except Exception:
         pytest.skip("No AWS credentials available")
 
     bucket = 's3libtestbucket'
@@ -62,7 +62,7 @@ def test_ten_puts_then_deletes():
     try:
         from s3lib.ui import load_creds
         (access_id, secret_key) = load_creds(None)
-    except:
+    except Exception:
         pytest.skip("No AWS credentials available")
 
     bucket = 's3libtestbucket'

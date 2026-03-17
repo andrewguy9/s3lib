@@ -278,7 +278,7 @@ def sign_request_v4(
     return authorization_header
 
 
-def hash_payload(payload: bytes| str) -> str:
+def hash_payload(payload: bytes | str) -> str:
     """
     Calculate the SHA256 hash of a payload.
 

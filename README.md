@@ -107,6 +107,7 @@ Options:
 - `--port PORT` - Custom port
 - `--output FILE` - Write output to file (default: stdout)
 - `--creds FILE` - Path to credentials file
+- `--range START-END` - Fetch only a byte range (e.g. `0-499`, `500-`, `-999`)
 
 ### s3put - Upload objects
 
@@ -221,63 +222,154 @@ Options:
 
 ## Python Library API
 
-### Basic Usage
+### Connection Lifecycle
+
+`Connection` must be used as a context manager. Calling methods outside of a `with` block raises `ConnectionLifecycleError`. The connection is established lazily on first use and closed when the `with` block exits.
 
 ```python
 from s3lib import Connection
 
-# Create connection
 access_id = "AKIAIOSFODNN7EXAMPLE"
 secret = b"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 
+with Connection(access_id, secret) as s3:
+    for bucket in s3.list_buckets():
+        print(bucket)
+```
+
+**Unconsumed responses**: If `get_object2` returns a stream and the `Connection` context exits before that stream is consumed, `ConnectionLifecycleError` is raised. Always close the stream before letting the connection exit:
+
+```python
+with Connection(access_id, secret) as s3:
+    stream, headers = s3.get_object2("mybucket", "file.txt")
+    with stream:               # stream must be closed inside the connection block
+        data = stream.read()
+```
+
+### Downloading Objects
+
+`get_object2` returns `(S3ByteStream | None, headers)`. The stream is `None` when a conditional request determines the object has not changed (304 Not Modified or 412 Precondition Failed).
+
+```python
+with Connection(access_id, secret) as s3:
+    # Simple download
+    stream, headers = s3.get_object2("mybucket", "file.txt")
+    with stream:
+        data = stream.read()
+
+    # Conditional download — skip if unchanged
+    stream, headers = s3.get_object2("mybucket", "file.txt", if_none_match=cached_etag)
+    if stream is None:
+        pass  # 304 Not Modified — use cached copy
+    else:
+        with stream:
+            data = stream.read()
+
+    # Conditional download — only if ETag matches
+    stream, headers = s3.get_object2("mybucket", "file.txt", if_match=expected_etag)
+    if stream is None:
+        pass  # 412 Precondition Failed — object changed
+    else:
+        with stream:
+            data = stream.read()
+```
+
+### S3ByteStream
+
+`get_object2` returns an `S3ByteStream` context manager. It must always be used with `with`:
+
+- **Full consumption**: when `.read()` returns `b""` (EOF), the underlying HTTP connection is kept alive and returned to a healthy state for reuse.
+- **Early exit**: when the `with` block exits before the stream is exhausted, the underlying socket is closed.
+
+```python
+# Incremental read — stream a large object to disk
+with Connection(access_id, secret) as s3:
+    stream, headers = s3.get_object2("mybucket", "largefile.bin")
+    with stream, open("local-large.bin", "wb") as f:
+        while chunk := stream.read(65536):
+            f.write(chunk)
+```
+
+### Byte Range Fetching
+
+Request only a portion of an object using `byte_range=(start, end)`. Both positions are inclusive, 0-based byte offsets. Either can be `None`:
+
+```python
+with Connection(access_id, secret) as s3:
+    # First 500 bytes
+    stream, headers = s3.get_object2("mybucket", "file.bin", byte_range=(0, 499))
+    with stream:
+        data = stream.read()
+
+    # From byte 4096 to end of object
+    stream, headers = s3.get_object2("mybucket", "file.bin", byte_range=(4096, None))
+    with stream:
+        tail = stream.read()
+```
+
+### Uploading Objects
+
+`put_object2` returns a `PutResult` TypedDict:
+
+| Field        | Type           | Description                                             |
+|--------------|----------------|---------------------------------------------------------|
+| `etag`       | `str`          | ETag of the stored object; use with `if_match` for future consistency checks |
+| `version_id` | `str \| None`  | Version ID if bucket versioning is enabled              |
+| `checksum`   | `str \| None`  | Server-confirmed checksum if one was requested          |
+
+```python
+with Connection(access_id, secret) as s3:
+    # Upload bytes
+    result = s3.put_object2("mybucket", "file.txt", b"Hello World")
+    print(result['etag'])
+
+    # Upload from an open file or BytesIO
+    with open("local.bin", "rb") as f:
+        result = s3.put_object2("mybucket", "remote.bin", f)
+
+    # Conditional upload — only if key does not already exist
+    result = s3.put_object2("mybucket", "file.txt", b"data", if_none_match=True)
+
+    # Conditional upload — only if object still matches a known ETag
+    result = s3.put_object2("mybucket", "file.txt", b"updated", if_match=result['etag'])
+```
+
+Conditional uploads that fail (412 Precondition Failed) raise `ValueError`.
+
+### Other Operations
+
+```python
 with Connection(access_id, secret) as s3:
     # List buckets
     for bucket in s3.list_buckets():
         print(bucket)
 
-    # List objects in a bucket
+    # List objects (keys only)
     for key in s3.list_bucket("mybucket"):
         print(key)
 
-    # List with metadata
+    # List objects with metadata
     for obj in s3.list_bucket2("mybucket"):
         print(obj['Key'], obj['Size'], obj['LastModified'])
 
-    # Get object
-    response = s3.get_object("mybucket", "myfile.txt")
-    data = response.read()
+    # Object metadata
+    headers = s3.head_object("mybucket", "file.txt")
 
-    # Upload object
-    s3.put_object("mybucket", "newfile.txt", b"Hello World")
+    # Copy object within or between buckets
+    s3.copy_object("bucket1", "src.txt", "bucket2", "dst.txt")
 
-    # Upload from file
-    with open("local.txt", "rb") as f:
-        s3.put_object("mybucket", "remote.txt", f)
-
-    # Copy object
-    s3.copy_object("bucket1", "file.txt", "bucket2", "file.txt")
-
-    # Delete object
-    s3.delete_object("mybucket", "oldfile.txt")
+    # Delete one object
+    s3.delete_object("mybucket", "file.txt")
 
     # Bulk delete
-    keys = ["file1.txt", "file2.txt", "file3.txt"]
-    for key, result in s3.delete_objects("mybucket", keys):
-        print(f"{key}: {result}")
-
-    # Get object metadata
-    headers = s3.head_object("mybucket", "file.txt")
-    print(dict(headers))
-
-    # Get object URL
-    url = s3.get_object_url("mybucket", "file.txt")
-    print(url)
+    for key, ok in s3.delete_objects("mybucket", ["a.txt", "b.txt"]):
+        print(key, ok)
 ```
 
 ### Connection Options
 
 ```python
-# Custom endpoint
+# Custom endpoint (e.g. MinIO or a specific AWS region)
 with Connection(access_id, secret, host="s3.us-west-2.amazonaws.com") as s3:
     pass
 
@@ -285,29 +377,9 @@ with Connection(access_id, secret, host="s3.us-west-2.amazonaws.com") as s3:
 with Connection(access_id, secret, port=9000) as s3:
     pass
 
-# Connection timeout
+# Connection timeout (seconds)
 with Connection(access_id, secret, conn_timeout=60) as s3:
     pass
-```
-
-### Streaming Large Objects
-
-The library is designed for memory efficiency with large files:
-
-```python
-# Download large file
-with Connection(access_id, secret) as s3:
-    response = s3.get_object("mybucket", "largefile.bin")
-    with open("local-large.bin", "wb") as f:
-        chunk = response.read(65536)  # 64KB chunks
-        while chunk:
-            f.write(chunk)
-            chunk = response.read(65536)
-
-# Upload large file
-with Connection(access_id, secret) as s3:
-    with open("large-local.bin", "rb") as f:
-        s3.put_object("mybucket", "large-remote.bin", f)
 ```
 
 ## Development
@@ -318,16 +390,19 @@ See [MAINTAINING.md](MAINTAINING.md) for development and maintenance instruction
 
 ```bash
 # Install development dependencies
-pip install tox
+make dev
 
-# Run tests
-tox
+# Run tests, type checking, and linting
+make check
 
-# Run tests for specific Python version
-tox -e py39
+# Run tests with coverage report
+make test
 
-# Run linting
-tox -e lint
+# Type check only
+make typecheck
+
+# Lint only
+make lint
 ```
 
 ## License
