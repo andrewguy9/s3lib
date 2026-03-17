@@ -324,6 +324,45 @@ def test_get_object2_stream_early_exit_closes():
     mock_resp.close.assert_called_once()
 
 
+def test_get_object2_on_close_called_on_exit():
+    """on_close callback fires when the stream context manager exits."""
+    import unittest.mock as mock
+
+    conn = Connection("someaccess", b"somesecret")
+    mock_resp = mock.Mock()
+    mock_resp.read.return_value = b"data"
+    conn._s3_get_request = lambda *a, **kw: (mock_resp, {})
+
+    stream, _ = conn.get_object2("bucket", "key")
+    on_close = mock.Mock()
+    stream._on_close = on_close
+
+    with stream:
+        pass
+
+    on_close.assert_called_once()
+
+
+def test_get_object2_on_close_called_after_exhaustion():
+    """on_close callback fires even when the stream is fully exhausted."""
+    import unittest.mock as mock
+
+    conn = Connection("someaccess", b"somesecret")
+    mock_resp = mock.Mock()
+    mock_resp.read.side_effect = [b"data", b""]
+    conn._s3_get_request = lambda *a, **kw: (mock_resp, {})
+
+    stream, _ = conn.get_object2("bucket", "key")
+    on_close = mock.Mock()
+    stream._on_close = on_close
+
+    with stream:
+        stream.read()
+        stream.read()  # exhausts
+
+    on_close.assert_called_once()
+
+
 def test_get_object2_206_on_byte_range():
     """byte_range request returns a stream."""
     import unittest.mock as mock

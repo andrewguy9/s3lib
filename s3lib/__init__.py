@@ -55,7 +55,8 @@ class S3ByteStream:
     A streaming byte source wrapping an S3 HTTP response.
 
     Returned by get_object2() when data is available. Supports incremental
-    reading via read() and should be used as a context manager.
+    reading via read() and MUST be used as a context manager to ensure the
+    underlying connection is cleaned up correctly.
 
     Connection hygiene on __exit__:
       - If the stream was fully exhausted by read(), the HTTP connection is
@@ -63,6 +64,9 @@ class S3ByteStream:
       - If the stream was not fully consumed (early exit), the underlying
         response is closed, triggering a reconnect on the next request.
         This avoids draining potentially large amounts of unwanted data.
+
+    An optional on_close callback fires in __exit__ after cleanup, allowing
+    callers to track stream lifetime and enforce handle discipline.
 
     Usage:
         stream, headers = conn.get_object2(bucket, key)
@@ -72,9 +76,10 @@ class S3ByteStream:
                     process(chunk)
     """
 
-    def __init__(self, response: HTTPResponse):
+    def __init__(self, response: HTTPResponse, on_close=None):
         self._response = response
         self._exhausted = False
+        self._on_close = on_close
 
     def read(self, size: int = -1) -> bytes:
         buf = self._response.read(size)
@@ -90,6 +95,8 @@ class S3ByteStream:
             # Not fully consumed — close to avoid draining a potentially large body.
             # The connection will reconnect on the next request.
             self._response.close()
+        if self._on_close:
+            self._on_close()
         return False
 
 
@@ -394,7 +401,11 @@ class Connection:
         )
         if response is None:
             return (None, resp_headers)
-        return (S3ByteStream(response), resp_headers)
+
+        def _on_close():
+            self._outstanding_response = None
+
+        return (S3ByteStream(response, on_close=_on_close), resp_headers)
 
     def get_object_url(self, bucket: str, key: str, proto="https") -> str:
         """get a public url for the object in the bucket."""
