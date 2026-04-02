@@ -430,7 +430,7 @@ def test_put_object_with_if_none_match():
         conn.put_object(BUCKET, key, b"first", if_none_match=True)
 
         # Second PUT with if_none_match raises since object already exists (412)
-        with pytest.raises(ValueError, match="412"):
+        with pytest.raises(s3lib.PreconditionFailed):
             conn.put_object(BUCKET, key, b"second", if_none_match=True)
 
         conn.delete_object(BUCKET, key)
@@ -453,7 +453,7 @@ def test_put_object_with_if_match():
         conn.put_object(BUCKET, key, b"updated", if_match=etag)
 
         # PUT with wrong ETag raises (412)
-        with pytest.raises(ValueError, match="412"):
+        with pytest.raises(s3lib.PreconditionFailed):
             conn.put_object(BUCKET, key, b"rejected", if_match='wrongetag')
 
         conn.delete_object(BUCKET, key)

@@ -464,6 +464,57 @@ def test_put_object2_no_version_or_checksum():
     assert result['checksum'] is None
 
 
+def test_put_object2_if_none_match_returns_none_on_412():
+    """put_object2 with if_none_match=True returns None when object already exists (412)."""
+    import unittest.mock as mock
+    from s3lib import Connection
+
+    conn = Connection("someaccess", b"somesecret")
+
+    mock_resp = mock.Mock()
+    mock_resp.status = 412
+    mock_resp.read.return_value = b""
+
+    conn._s3_request = lambda *a, **kw: mock_resp
+
+    result = conn.put_object2("bucket", "key", b"data", if_none_match=True)
+    assert result is None
+
+
+def test_put_object2_if_match_returns_none_on_412():
+    """put_object2 with if_match returns None when ETag doesn't match (412)."""
+    import unittest.mock as mock
+    from s3lib import Connection
+
+    conn = Connection("someaccess", b"somesecret")
+
+    mock_resp = mock.Mock()
+    mock_resp.status = 412
+    mock_resp.read.return_value = b""
+
+    conn._s3_request = lambda *a, **kw: mock_resp
+
+    result = conn.put_object2("bucket", "key", b"data", if_match="oldetag")
+    assert result is None
+
+
+def test_put_object_raises_precondition_failed_on_412():
+    """put_object raises PreconditionFailed (not ValueError) when condition fails."""
+    import unittest.mock as mock
+    from s3lib import Connection, PreconditionFailed
+
+    conn = Connection("someaccess", b"somesecret")
+
+    mock_resp = mock.Mock()
+    mock_resp.status = 412
+    mock_resp.read.return_value = b""
+
+    conn._s3_request = lambda *a, **kw: mock_resp
+
+    with pytest.raises(PreconditionFailed):
+        conn.put_object("bucket", "key", b"data", if_none_match=True)
+
+
 def test_automatic_region_discovery():
     """
     Test that regions are automatically discovered from redirects.

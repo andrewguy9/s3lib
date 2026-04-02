@@ -50,6 +50,15 @@ class ConnectionLifecycleError(Exception):
     pass
 
 
+class PreconditionFailed(Exception):
+    """Raised when a conditional request fails (HTTP 412 Precondition Failed).
+
+    This is raised by put_object() when if_none_match=True and the object
+    already exists, or when if_match is provided and the ETag doesn't match.
+    """
+    pass
+
+
 class S3ByteStream:
     """
     A streaming byte source wrapping an S3 HTTP response.
@@ -495,9 +504,9 @@ class Connection:
 
         Raises:
             ValueError: If checksum auto-calculation requested but not possible (streaming data)
-            HTTP 412: If if_none_match=True and object already exists
-            HTTP 412: If if_match provided and ETag doesn't match
-            HTTP 400: If checksum value doesn't match uploaded data
+            PreconditionFailed: If if_none_match=True and object already exists
+            PreconditionFailed: If if_match provided and ETag doesn't match
+            ValueError: If checksum value doesn't match uploaded data (HTTP 400)
 
         Examples:
             # Basic upload with default SHA256 integrity (str/bytes only)
@@ -536,12 +545,13 @@ class Connection:
         checksum_algorithm: str | None = None,
         if_none_match: bool = False,
         if_match: str | None = None,
-    ) -> PutResult:
+    ) -> 'PutResult | None':
         """
         Upload an object, returning a PutResult with fields useful for consistency checks.
 
         Unlike put_object(), this method extracts the meaningful fields from the
-        HTTP response so the caller never has to parse headers.
+        HTTP response so the caller never has to parse headers. Conditional failures
+        (412) are returned as None rather than raised as exceptions.
 
         Args:
             bucket: S3 bucket name
@@ -559,10 +569,11 @@ class Connection:
                             get_object2/put_object2 calls for consistency checks
                 version_id: Version ID if bucket versioning is enabled, otherwise None
                 checksum:   Server-confirmed checksum if one was sent, otherwise None
+            None if the conditional check failed (object exists when if_none_match=True,
+                or ETag mismatch when if_match was provided)
 
         Raises:
             ValueError: If checksum calculation was requested but not possible
-            ValueError: On any unexpected HTTP response status
 
         Examples:
             # Basic upload
@@ -575,19 +586,26 @@ class Connection:
             if stream is None:
                 raise RuntimeError("object was modified between write and read")
 
-            # Create-only (prevent overwrites)
+            # Create-only (prevent overwrites) — None means object already existed
             result = conn.put_object2(bucket, key, data, if_none_match=True)
+            if result is None:
+                pass  # object already exists, upload skipped
 
-            # Optimistic locking
+            # Optimistic locking — None means ETag changed (concurrent write)
             result = conn.put_object2(bucket, key, new_data, if_match=old_etag)
+            if result is None:
+                pass  # conflict, retry with fresh ETag
         """
-        _, resp_headers = self._s3_put_request(
-            bucket, key, data,
-            sha256_hint=sha256_hint,
-            checksum_algorithm=checksum_algorithm,
-            if_none_match=if_none_match,
-            if_match=if_match,
-        )
+        try:
+            _, resp_headers = self._s3_put_request(
+                bucket, key, data,
+                sha256_hint=sha256_hint,
+                checksum_algorithm=checksum_algorithm,
+                if_none_match=if_none_match,
+                if_match=if_match,
+            )
+        except PreconditionFailed:
+            return None
         h = dict(resp_headers)
 
         # Strip surrounding quotes S3 wraps ETags in
@@ -846,6 +864,12 @@ class Connection:
             sha256_hint=sha256_hint,
             md5_hint=md5_hint,
         )
+        if resp.status == 412:
+            resp.read()  # consume response body before raising
+            self._outstanding_response = None
+            raise PreconditionFailed(
+                "Precondition failed: object exists (if_none_match) or ETag mismatch (if_match)"
+            )
         if resp.status != OK:
             raise_http_resp_error(resp)
         resp.read()  # NOTE: Should be zero length response. Required to reset the connection.
