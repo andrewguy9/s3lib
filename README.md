@@ -309,7 +309,9 @@ with Connection(access_id, secret) as s3:
 
 ### Uploading Objects
 
-`put_object2` returns a `PutResult` TypedDict:
+#### put_object2 (recommended)
+
+`put_object2` returns a `PutResult` TypedDict on success, or `None` when a conditional check fails — no exception to catch.
 
 | Field        | Type           | Description                                             |
 |--------------|----------------|---------------------------------------------------------|
@@ -327,14 +329,37 @@ with Connection(access_id, secret) as s3:
     with open("local.bin", "rb") as f:
         result = s3.put_object2("mybucket", "remote.bin", f)
 
-    # Conditional upload — only if key does not already exist
+    # Create-only — None means the object already existed, upload was skipped
     result = s3.put_object2("mybucket", "file.txt", b"data", if_none_match=True)
+    if result is None:
+        pass  # object already exists
 
-    # Conditional upload — only if object still matches a known ETag
-    result = s3.put_object2("mybucket", "file.txt", b"updated", if_match=result['etag'])
+    # Optimistic locking — None means a concurrent write changed the object
+    result = s3.put_object2("mybucket", "file.txt", b"updated", if_match=old_etag)
+    if result is None:
+        pass  # ETag changed, retry with a fresh read
 ```
 
-Conditional uploads that fail (412 Precondition Failed) raise `ValueError`.
+#### put_object (low-level)
+
+`put_object` returns a raw `(status, headers)` tuple. Conditional failures raise `PreconditionFailed`.
+
+```python
+from s3lib import Connection, PreconditionFailed
+
+with Connection(access_id, secret) as s3:
+    # Create-only upload
+    try:
+        s3.put_object("mybucket", "file.txt", b"data", if_none_match=True)
+    except PreconditionFailed:
+        pass  # object already exists
+
+    # Optimistic locking
+    try:
+        s3.put_object("mybucket", "file.txt", b"updated", if_match=old_etag)
+    except PreconditionFailed:
+        pass  # ETag changed, retry with a fresh read
+```
 
 ### Other Operations
 
