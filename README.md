@@ -248,7 +248,9 @@ with Connection(access_id, secret) as s3:
 
 ### Downloading Objects
 
-`get_object2` returns `(S3ByteStream | None, headers)`. The stream is `None` when a conditional request determines the object has not changed (304 Not Modified or 412 Precondition Failed).
+#### get_object2 (recommended)
+
+`get_object2` returns `(S3ByteStream, headers)` on success, or `(None, headers)` when a conditional request produces no body (304 Not Modified or 412 Precondition Failed).
 
 ```python
 with Connection(access_id, secret) as s3:
@@ -257,7 +259,7 @@ with Connection(access_id, secret) as s3:
     with stream:
         data = stream.read()
 
-    # Conditional download — skip if unchanged
+    # Conditional download — skip if unchanged (caching)
     stream, headers = s3.get_object2("mybucket", "file.txt", if_none_match=cached_etag)
     if stream is None:
         pass  # 304 Not Modified — use cached copy
@@ -265,13 +267,34 @@ with Connection(access_id, secret) as s3:
         with stream:
             data = stream.read()
 
-    # Conditional download — only if ETag matches
+    # Conditional download — only if ETag still matches
     stream, headers = s3.get_object2("mybucket", "file.txt", if_match=expected_etag)
     if stream is None:
-        pass  # 412 Precondition Failed — object changed
+        pass  # 412 Precondition Failed — object has changed
     else:
         with stream:
             data = stream.read()
+```
+
+#### get_object (low-level)
+
+`get_object` returns the raw `HTTPResponse`. Conditional responses (304, 412) are returned as status codes — no exception is raised.
+
+```python
+with Connection(access_id, secret) as s3:
+    # Conditional download — check status to detect unchanged object
+    response = s3.get_object("mybucket", "file.txt", if_none_match=cached_etag)
+    if response.status == 304:
+        pass  # Not Modified — use cached copy
+    else:
+        data = response.read()
+
+    # Conditional download — check status to detect changed object
+    response = s3.get_object("mybucket", "file.txt", if_match=expected_etag)
+    if response.status == 412:
+        pass  # Precondition Failed — object has changed
+    else:
+        data = response.read()
 ```
 
 ### S3ByteStream
